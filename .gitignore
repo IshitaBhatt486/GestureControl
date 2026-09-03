@@ -1,0 +1,36 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test and temporary artifacts
+.test-tmp/
+tmp/
+*.tmp
+
+# PyInstaller output (keep the spec and packaging metadata tracked)
+build/
+dist/
+*.toc
+*.pkg
+
+# Logs and local runtime state
+*.log
+*.pid
+
+# Editors and operating-system metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini

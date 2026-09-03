@@ -1,0 +1,7 @@
+{
+  "camera_index": 0,
+  "gesture_sensitivity": 0.6,
+  "gesture_cooldown": 1.0,
+  "startup_enabled": false,
+  "overlay_enabled": true
+}
