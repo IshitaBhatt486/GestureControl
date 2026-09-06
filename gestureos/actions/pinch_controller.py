@@ -30,6 +30,7 @@ class PinchController:
         action_cooldown: float = 0.1,
         clock: Callable[[], float] = time.monotonic,
         pyautogui_module: Any = pyautogui,
+        dispatcher: Callable[[str, Callable[[], None]], None] | None = None,
     ) -> None:
         if not 0 < smoothing <= 1:
             raise ValueError("Smoothing must be between 0 and 1")
@@ -39,6 +40,7 @@ class PinchController:
         self.action_cooldown = action_cooldown
         self._clock = clock
         self._pyautogui = pyautogui_module
+        self._dispatcher = dispatcher
         self._smoothed_y: float | None = None
         self._action_anchor_y: float | None = None
         self._last_action_time = float("-inf")
@@ -67,7 +69,11 @@ class PinchController:
             return PinchControlResult(True, distance)
 
         action = "volumeup" if movement > 0 else "volumedown"
-        self._pyautogui.press(action)
+        callback = lambda: self._pyautogui.press(action)
+        if self._dispatcher is None:
+            callback()
+        else:
+            self._dispatcher(action, callback)
         # One step per threshold crossing prevents large, noisy frame jumps from bursting.
         direction = 1.0 if movement > 0 else -1.0
         self._action_anchor_y -= direction * self.movement_threshold

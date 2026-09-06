@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 from gestureos.config.settings_manager import AppSettings
-from gestureos.vision.camera_manager import CameraWorker, GestureWorker, LatestFrameBuffer
+from gestureos.vision.camera_manager import CameraManager, CameraWorker, GestureWorker, LatestFrameBuffer
 
 
 def test_worker_releases_camera(qtbot):
@@ -47,3 +47,19 @@ def test_gesture_worker_releases_engine(qtbot):
         worker.run()
 
     engine.close.assert_called_once()
+
+
+def test_stop_camera_requests_shutdown_without_waiting_on_threads():
+    manager = CameraManager()
+    manager._capture_thread = MagicMock()
+    manager._gesture_thread = MagicMock()
+    manager._action_thread = MagicMock()
+    manager._buffer = MagicMock()
+
+    manager.stop_camera()
+
+    assert manager._stop_event.is_set()
+    manager._buffer.close.assert_called_once_with()
+    manager._capture_thread.wait.assert_not_called()
+    manager._gesture_thread.wait.assert_not_called()
+    manager._action_thread.wait.assert_not_called()

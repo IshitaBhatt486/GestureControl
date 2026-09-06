@@ -33,7 +33,20 @@ def test_accelerated_30_minute_buffer_soak_has_no_growth():
     tracemalloc.stop()
 
     assert growth < 1_000_000
-    assert buffer._frame is None
+    assert buffer._packet is None
+
+
+def test_buffer_preserves_capture_profiling_metadata():
+    buffer = LatestFrameBuffer()
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+    buffer.put(frame, captured_at=12.5, camera_fps=29.7)
+
+    packet = buffer.get_packet(timeout=0)
+
+    assert packet is not None
+    assert packet.frame is frame
+    assert packet.captured_at == 12.5
+    assert packet.camera_fps == 29.7
 
 
 def test_diagnostics_reports_cpu_and_memory_estimates():

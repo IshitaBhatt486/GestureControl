@@ -52,3 +52,23 @@ def test_default_cooldown_and_invalid_value():
     assert mapper.cooldown == 1.0
     with pytest.raises(ValueError):
         ActionMapper(cooldown=-0.1)
+
+
+def test_json_style_binding_reassigns_gesture_action():
+    mapper, gui, _ = _mapper()
+    mapper._gesture_bindings["Open Palm"] = "volume_down"
+
+    assert mapper.execute("Open Palm")
+    gui.press.assert_called_once_with("volumedown")
+
+
+def test_disabled_gesture_never_executes():
+    gui = MagicMock()
+    mapper = ActionMapper(
+        pyautogui_module=gui,
+        keyboard_module=MagicMock(),
+        enabled_gestures={"Open Palm": False},
+    )
+
+    assert not mapper.execute("Open Palm")
+    gui.press.assert_not_called()

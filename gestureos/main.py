@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from gestureos.ui.main_window import MainWindow
 from gestureos.config.settings_manager import SettingsManager
 from gestureos.services.startup_manager import WindowsStartupManager
+from gestureos.version import __version__
 
 
 def resource_path(relative: str) -> Path:
@@ -47,7 +48,7 @@ def main() -> int:
         app.setQuitOnLastWindowClosed(False)
         app.setApplicationName("GestureOS")
         app.setOrganizationName("GestureOS")
-        app.setApplicationVersion("1.0.0")
+        app.setApplicationVersion(__version__)
         from PyQt6.QtGui import QIcon
 
         app.setWindowIcon(QIcon(str(resource_path("gestureos/assets/gestureos.ico"))))

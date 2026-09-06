@@ -1,7 +1,28 @@
 {
   "camera_index": 0,
-  "gesture_sensitivity": 0.6,
+  "gesture_sensitivity": 0.5,
   "gesture_cooldown": 1.0,
   "startup_enabled": false,
-  "overlay_enabled": true
+  "overlay_enabled": true,
+  "gesture_bindings": {
+    "Open Palm": "play_pause",
+    "Fist": "volume_down",
+    "Thumbs Up": "volume_up",
+    "Thumbs Down": "volume_down",
+    "Peace Sign": "previous_track",
+    "Pointing": "previous_track",
+    "Swipe Left": "previous_track",
+    "Swipe Right": "next_track"
+  },
+  "enabled_gestures": {
+    "Open Palm": true,
+    "Fist": true,
+    "Thumbs Up": true,
+    "Thumbs Down": true,
+    "Peace Sign": true,
+    "Pointing": true,
+    "Swipe Left": true,
+    "Swipe Right": true
+  },
+  "theme": "dark"
 }

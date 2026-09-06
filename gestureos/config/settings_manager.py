@@ -5,11 +5,17 @@ from __future__ import annotations
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from gestureos.services.startup_manager import WindowsStartupManager
+from gestureos.config.gesture_config import (
+    ACTIONS,
+    GESTURES,
+    complete_bindings,
+    complete_enabled,
+)
 
 
 @dataclass(frozen=True)
@@ -19,6 +25,9 @@ class AppSettings:
     gesture_cooldown: float = 1.0
     startup_enabled: bool = False
     overlay_enabled: bool = True
+    gesture_bindings: dict[str, str] = field(default_factory=complete_bindings)
+    enabled_gestures: dict[str, bool] = field(default_factory=complete_enabled)
+    theme: str = "dark"
 
     def __post_init__(self) -> None:
         if not isinstance(self.camera_index, int) or isinstance(self.camera_index, bool) or self.camera_index < 0:
@@ -37,6 +46,16 @@ class AppSettings:
             raise ValueError("gesture_cooldown cannot be negative")
         if not isinstance(self.startup_enabled, bool) or not isinstance(self.overlay_enabled, bool):
             raise ValueError("startup_enabled and overlay_enabled must be booleans")
+        if set(self.gesture_bindings) != set(GESTURES):
+            raise ValueError("gesture_bindings must contain every supported gesture")
+        if any(action not in ACTIONS for action in self.gesture_bindings.values()):
+            raise ValueError("gesture_bindings contains an unsupported action")
+        if set(self.enabled_gestures) != set(GESTURES):
+            raise ValueError("enabled_gestures must contain every supported gesture")
+        if any(not isinstance(enabled, bool) for enabled in self.enabled_gestures.values()):
+            raise ValueError("enabled_gestures values must be booleans")
+        if self.theme not in {"dark", "light"}:
+            raise ValueError("theme must be 'dark' or 'light'")
 
 
 class SettingsManager:
@@ -67,6 +86,8 @@ class SettingsManager:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
             values = {key: value for key, value in raw.items() if key in self.FIELDS}
+            values["gesture_bindings"] = complete_bindings(values.get("gesture_bindings"))
+            values["enabled_gestures"] = complete_enabled(values.get("enabled_gestures"))
             return AppSettings(**values)
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             return AppSettings()

@@ -1,0 +1,21 @@
+[run]
+branch = True
+source = gestureos
+omit =
+    gestureos/__init__.py
+    gestureos/*/__init__.py
+
+[report]
+show_missing = True
+skip_covered = True
+precision = 1
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+
+[html]
+directory = test-results/coverage-html
+
+[xml]
+output = test-results/coverage.xml

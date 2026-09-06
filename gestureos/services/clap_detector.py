@@ -22,6 +22,8 @@ class ClapDetector(QObject):
 
     double_clap = pyqtSignal()
     error = pyqtSignal(str)
+    started = pyqtSignal()
+    stopped = pyqtSignal()
 
     def __init__(
         self,
@@ -62,6 +64,7 @@ class ClapDetector(QObject):
             )
             self._stream.start()
             logger.info("Clap detector started")
+            self.started.emit()
         except Exception as exc:
             self._stream = None
             logger.exception("Unable to start clap detector")
@@ -75,6 +78,7 @@ class ClapDetector(QObject):
             try:
                 stream.stop()
                 stream.close()
+                self.stopped.emit()
             except Exception:
                 logger.exception("Unable to cleanly close microphone stream")
 

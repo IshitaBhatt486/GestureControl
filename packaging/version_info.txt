@@ -15,12 +15,12 @@ VSVersionInfo(
         '040904B0',
         [StringStruct('CompanyName', 'GestureOS'),
          StringStruct('FileDescription', 'GestureOS hand gesture control'),
-         StringStruct('FileVersion', '1.0.0.0'),
+         StringStruct('FileVersion', '1.0.0-rc.1'),
          StringStruct('InternalName', 'GestureOS'),
          StringStruct('LegalCopyright', 'Copyright (c) 2026 GestureOS'),
          StringStruct('OriginalFilename', 'GestureOS.exe'),
          StringStruct('ProductName', 'GestureOS'),
-         StringStruct('ProductVersion', '1.0.0')])
+         StringStruct('ProductVersion', '1.0.0-rc.1')])
     ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]
