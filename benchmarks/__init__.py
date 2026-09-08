@@ -1,1 +1,1 @@
-"""Repeatable GestureOS performance benchmarks."""
+"""Repeatable HandWave performance benchmarks."""

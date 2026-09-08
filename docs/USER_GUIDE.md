@@ -1,8 +1,8 @@
-# GestureOS User Guide
+# HandWave User Guide
 
 ## 1. Getting started
 
-Install GestureOS with `GestureOS-1.0.0-rc.1-Setup.exe`, then launch it from the desktop
+Install HandWave with `HandWave-1.0.0-rc.1-Setup.exe`, then launch it from the desktop
 or Start Menu. On first launch, a short walkthrough explains gestures, tray mode,
 and double-clap activation.
 
@@ -26,7 +26,7 @@ The dashboard contains:
 8. **Diagnostics summary** — FPS, latency, CPU, RAM, and dropped frames.
 
 Select **Enable Recognition** to open the camera. Select **Pause** to release it.
-Closing the window hides GestureOS in the system tray; it does not stop active
+Closing the window hides HandWave in the system tray; it does not stop active
 recognition. Double-click the tray icon to reopen the window.
 
 ## 3. Performing gestures
@@ -66,16 +66,16 @@ settings are loaded when a new camera session begins.
 
 Settings are stored in JSON:
 
-- Installed build: `%APPDATA%\GestureOS\config\settings.json`
-- Source checkout: `gestureos\config\settings.json`
+- Installed build: `%APPDATA%\HandWave\config\settings.json`
+- Source checkout: `handwave\config\settings.json`
 
-If the file is invalid, GestureOS safely returns to defaults.
+If the file is invalid, HandWave safely returns to defaults.
 
 ## 5. Dark and light themes
 
 Use **Light mode** or **Dark mode** in the title area. The choice is saved immediately.
 
-![GestureOS light dashboard](images/dashboard-light.png)
+![HandWave light dashboard](images/dashboard-light.png)
 
 The layout adapts to the available width. On compact windows, the camera and
 activity panels stack vertically and remain accessible through scrolling.
@@ -91,8 +91,8 @@ Open the **Diagnostics** tab for the full live telemetry view.
 | Camera FPS | Webcam frames captured per second. |
 | Recognition FPS | Frames completed by the recognition pipeline per second. |
 | Latency | Time from frame capture to completed recognition/action dispatch. |
-| CPU | GestureOS process utilization normalized across logical CPU cores. |
-| Memory | GestureOS working-set RAM. |
+| CPU | HandWave process utilization normalized across logical CPU cores. |
+| Memory | HandWave working-set RAM. |
 | Active threads | Running capture, recognition, and action pipeline threads. |
 | Current gesture | Most useful current result, plus raw and stable values. |
 
@@ -103,7 +103,7 @@ stale frames keeps the displayed and acted-on hand position current.
 
 The tray menu provides:
 
-- Open GestureOS
+- Open HandWave
 - Settings
 - Enable or disable recognition
 - Launch at Windows Startup
@@ -114,7 +114,7 @@ microphone, removes the tray icon, and closes the application.
 
 ## 8. Uninstalling
 
-Use Windows **Settings > Apps > Installed apps > GestureOS**, or choose
-**Uninstall GestureOS** from the Start Menu. User settings are retained so a later
-installation can restore preferences. Delete `%APPDATA%\GestureOS` manually if you
+Use Windows **Settings > Apps > Installed apps > HandWave**, or choose
+**Uninstall HandWave** from the Start Menu. User settings are retained so a later
+installation can restore preferences. Delete `%APPDATA%\HandWave` manually if you
 also want to remove saved settings and logs.

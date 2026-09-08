@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from gestureos.gestures.gesture_engine import GestureEngine
+from handwave.gestures.gesture_engine import GestureEngine
 
 
 def _landmarks():
@@ -14,12 +14,12 @@ def _landmarks():
 def _engine_with_results(results, times=(1.0, 1.04)):
     hands = MagicMock()
     hands.process.side_effect = results
-    with patch("gestureos.gestures.gesture_engine.mp.solutions.hands.Hands", return_value=hands) as factory:
+    with patch("handwave.gestures.gesture_engine.mp.solutions.hands.Hands", return_value=hands) as factory:
         engine = GestureEngine(clock=iter(times).__next__)
     return engine, hands, factory
 
 
-def test_configures_single_hand_and_draws_green_landmarks_and_connections():
+def test_configures_up_to_two_hands_and_draws_green_landmarks_and_connections():
     landmarks = _landmarks()
     engine, _, factory = _engine_with_results(
         [SimpleNamespace(multi_hand_landmarks=[landmarks])], times=(1.0,)
@@ -27,10 +27,10 @@ def test_configures_single_hand_and_draws_green_landmarks_and_connections():
     engine._drawing = MagicMock()
     frame = np.zeros((100, 160, 3), dtype=np.uint8)
 
-    with patch("gestureos.gestures.gesture_engine.cv2.putText") as put_text:
+    with patch("handwave.gestures.gesture_engine.cv2.putText") as put_text:
         _, result = engine.process(frame)
 
-    assert factory.call_args.kwargs["max_num_hands"] == 1
+    assert factory.call_args.kwargs["max_num_hands"] == 2
     assert len(landmarks.landmark) == 21
     engine._drawing.draw_landmarks.assert_called_once_with(
         frame,
@@ -58,7 +58,7 @@ def test_reports_hand_loss_and_recovers_while_updating_fps():
     engine._drawing = MagicMock()
     frame = np.zeros((100, 160, 3), dtype=np.uint8)
 
-    with patch("gestureos.gestures.gesture_engine.cv2.putText") as put_text:
+    with patch("handwave.gestures.gesture_engine.cv2.putText") as put_text:
         first = engine.process(frame.copy())[1]
         lost = engine.process(frame.copy())[1]
         recovered = engine.process(frame.copy())[1]

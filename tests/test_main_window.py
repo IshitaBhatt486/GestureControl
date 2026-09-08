@@ -1,11 +1,13 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from PyQt6.QtCore import QObject, QSettings, Qt, pyqtSignal
 from PyQt6.QtWidgets import QBoxLayout
 
-from gestureos.config.settings_manager import SettingsManager
-from gestureos.ui.main_window import MainWindow
-from gestureos.vision.camera_manager import PipelineMetrics
+from handwave.config.profile_manager import ProfileManager
+from handwave.config.settings_manager import SettingsManager
+from handwave.services.foreground_app import ForegroundAppInfo
+from handwave.ui.main_window import MainWindow
+from handwave.vision.camera_manager import PipelineMetrics
 
 
 class FakeCamera(QObject):
@@ -16,6 +18,7 @@ class FakeCamera(QObject):
     recognition_updated = pyqtSignal(str, str, str)
     diagnostics_updated = pyqtSignal(object)
     confidence_updated = pyqtSignal(float)
+    action_outcome_updated = pyqtSignal(object)
 
     def __init__(self):
         super().__init__()
@@ -71,6 +74,102 @@ def test_close_keeps_recognition_running_and_tray_can_reopen(qtbot):
     window.open_action.trigger()
     assert window.isVisible()
     window.exit_application()
+
+
+def test_starting_recognition_activates_matching_application_profile(tmp_path, qtbot):
+    camera = FakeCamera()
+    camera.apply_profile_settings = MagicMock()
+    profile_manager = ProfileManager(tmp_path / "profiles.json")
+    profile_manager.create_profile("Spotify", app_executable="spotify.exe")
+    window = MainWindow(
+        camera_manager=camera,
+        profile_manager=profile_manager,
+        foreground_app_provider=lambda: ForegroundAppInfo("spotify.exe", "Spotify"),
+    )
+    qtbot.addWidget(window)
+
+    window.start_camera()
+    camera.started.emit()
+
+    assert window.profile_status.text() == "Active profile: Spotify"
+    camera.apply_profile_settings.assert_called_once()
+    assert window._profile_poll_timer.isActive()
+
+
+def test_no_matching_profile_falls_back_to_global_without_interrupting_recognition(tmp_path, qtbot):
+    camera = FakeCamera()
+    profile_manager = ProfileManager(tmp_path / "profiles.json")
+    window = MainWindow(
+        camera_manager=camera,
+        profile_manager=profile_manager,
+        foreground_app_provider=lambda: ForegroundAppInfo("notepad.exe", "Untitled"),
+    )
+    qtbot.addWidget(window)
+
+    window.start_camera()
+    camera.started.emit()
+
+    assert window.profile_status.text() == "Active profile: Global"
+    camera.stop_camera.assert_not_called()
+
+
+def test_stopping_recognition_stops_profile_polling(qtbot):
+    camera = FakeCamera()
+    window = MainWindow(camera_manager=camera)
+    qtbot.addWidget(window)
+
+    window.start_camera()
+    camera.started.emit()
+    assert window._profile_poll_timer.isActive()
+
+    window.stop_camera()
+    camera.stopped.emit()
+    assert not window._profile_poll_timer.isActive()
+
+
+def test_action_outcome_is_recorded_in_bounded_history(qtbot):
+    from handwave.actions.action_mapper import ActionOutcome
+
+    camera = FakeCamera()
+    window = MainWindow(camera_manager=camera)
+    qtbot.addWidget(window)
+
+    camera.action_outcome_updated.emit(ActionOutcome("Open Palm", True, "Play / Pause", None))
+    camera.action_outcome_updated.emit(
+        ActionOutcome("Thumbs Up", False, "Volume Up", "cooldown active")
+    )
+
+    entries = window.action_history.recent()
+    assert len(entries) == 2
+    assert entries[0].gesture == "Thumbs Up"
+    assert entries[0].result_text == "Blocked: cooldown active"
+    assert "Blocked: cooldown active" in window.action_log.item(0).text()
+
+
+def test_open_settings_applies_theme_change_from_dialog(qtbot, tmp_path):
+    from PyQt6.QtWidgets import QDialog
+    from handwave.ui.settings_dialog import SettingsDialog
+
+    camera = FakeCamera()
+    settings_manager = SettingsManager(tmp_path / "settings.json")
+    window = MainWindow(camera_manager=camera, settings_manager=settings_manager)
+    qtbot.addWidget(window)
+    assert window._theme_mode == "dark"
+
+    base = window.settings_manager.settings
+    with patch.object(SettingsDialog, "exec", return_value=QDialog.DialogCode.Accepted):
+        with patch.object(SettingsDialog, "values", return_value={
+            "gesture_sensitivity": base.gesture_sensitivity,
+            "gesture_cooldown": base.gesture_cooldown,
+            "auto_switch_profiles": base.auto_switch_profiles,
+            "camera_index": base.camera_index,
+            "theme": "light",
+            "gesture_bindings": base.gesture_bindings,
+            "enabled_gestures": base.enabled_gestures,
+        }):
+            window.open_settings()
+
+    assert window._theme_mode == "light"
 
 
 def test_tray_enable_disable_and_exit(qtbot):
@@ -253,7 +352,7 @@ def test_camera_retry_waits_for_worker_teardown(qtbot, monkeypatch):
     camera = FakeCamera()
     window = MainWindow(camera_manager=camera)
     qtbot.addWidget(window)
-    monkeypatch.setattr("gestureos.ui.main_window.QMessageBox.warning", lambda *args: None)
+    monkeypatch.setattr("handwave.ui.main_window.QMessageBox.warning", lambda *args: None)
 
     camera.error.emit("Camera disconnected")
     assert not window.start_button.isEnabled()
@@ -274,7 +373,7 @@ def test_accessibility_names_and_keyboard_shortcuts(qtbot):
 
     assert window.preview.accessibleName() == "Live camera preview"
     assert window.confidence_bar.accessibleName() == "Gesture confidence"
-    assert window.pages.accessibleName() == "GestureOS pages"
+    assert window.pages.accessibleName() == "HandWave pages"
     assert window.enable_action.shortcut().toString() == "Alt+E"
     assert window.settings_action.shortcut().toString() == "Ctrl+,"
     window.diagnostics_action.trigger()

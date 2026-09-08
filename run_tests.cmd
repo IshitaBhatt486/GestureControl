@@ -3,13 +3,14 @@ setlocal
 cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" (
-    echo Virtual environment not found. Create .venv and install gestureos\requirements.txt first.
+    echo Virtual environment not found. Create .venv and install handwave\requirements.txt first.
     exit /b 1
 )
 
 if not exist "test-results" mkdir "test-results"
-if not exist ".test-tmp\pytest" mkdir ".test-tmp\pytest"
-set "TEMP=%CD%\.test-tmp\pytest"
+set "TEST_TEMP=%CD%\.test-tmp\pytest-%RANDOM%-%RANDOM%"
+if not exist "%TEST_TEMP%" mkdir "%TEST_TEMP%"
+set "TEMP=%TEST_TEMP%"
 set "TMP=%TEMP%"
 ".venv\Scripts\python.exe" -m pytest --basetemp "%TEMP%" %*
 if errorlevel 1 exit /b %errorlevel%

@@ -17,9 +17,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: gestureos/requirements.txt
+          cache-dependency-path: handwave/requirements.txt
       - name: Install dependencies
-        run: python -m pip install -r gestureos/requirements.txt
+        run: python -m pip install -r handwave/requirements.txt
       - name: Run test and coverage gates
         run: python -m pytest -q
       - name: Upload reports

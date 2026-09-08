@@ -1,9 +1,9 @@
 [run]
 branch = True
-source = gestureos
+source = handwave
 omit =
-    gestureos/__init__.py
-    gestureos/*/__init__.py
+    handwave/__init__.py
+    handwave/*/__init__.py
 
 [report]
 show_missing = True

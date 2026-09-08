@@ -2,7 +2,7 @@ import tracemalloc
 
 import numpy as np
 
-from gestureos.vision.camera_manager import DiagnosticsMonitor, LatestFrameBuffer
+from handwave.vision.camera_manager import DiagnosticsMonitor, LatestFrameBuffer
 
 
 def test_latest_frame_buffer_skips_stale_frames_and_stays_bounded():

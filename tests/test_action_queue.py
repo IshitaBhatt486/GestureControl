@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 
-from gestureos.actions.action_mapper import ActionMapper
-from gestureos.actions.action_queue import ActionQueue, ActionWorker
+from handwave.actions.action_mapper import ActionMapper
+from handwave.actions.action_queue import ActionQueue, ActionWorker
 
 
 def test_action_queue_executes_accepted_actions_in_order(qtbot):

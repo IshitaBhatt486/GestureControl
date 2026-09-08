@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from gestureos.actions.pinch_controller import PinchController
-from gestureos.gestures.hand_landmark_data import HandLandmarkData
+from handwave.actions.pinch_controller import PinchController
+from handwave.gestures.hand_landmark_data import HandLandmarkData
 
 
 def _hand(y, pinched=True):

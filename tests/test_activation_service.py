@@ -1,4 +1,4 @@
-from gestureos.services.activation_service import ActivationService
+from handwave.services.activation_service import ActivationService
 
 
 def test_activation_lifecycle(qtbot):

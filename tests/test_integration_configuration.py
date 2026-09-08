@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 
-from gestureos.actions.action_mapper import ActionMapper
-from gestureos.config.settings_manager import SettingsManager
+from handwave.actions.action_mapper import ActionMapper
+from handwave.config.settings_manager import SettingsManager
 
 
 def test_persisted_binding_drives_action_execution_after_restart(tmp_path):

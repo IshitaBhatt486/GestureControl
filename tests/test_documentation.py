@@ -6,10 +6,13 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCUMENTS = (
     ROOT / "README.md",
     ROOT / "docs" / "USER_GUIDE.md",
-    ROOT / "docs" / "DEVELOPER_GUIDE.md",
-    ROOT / "docs" / "ARCHITECTURE.md",
-    ROOT / "docs" / "BENCHMARK_REPORT.md",
-    ROOT / "docs" / "TROUBLESHOOTING.md",
+    ROOT / "docs" / "architecture.md",
+    ROOT / "docs" / "gesture-recognition.md",
+    ROOT / "docs" / "actions.md",
+    ROOT / "docs" / "profiles.md",
+    ROOT / "docs" / "benchmarking.md",
+    ROOT / "docs" / "development.md",
+    ROOT / "docs" / "troubleshooting.md",
 )
 
 
@@ -27,8 +30,8 @@ def test_all_local_markdown_images_exist():
                 assert (document.parent / target).resolve().is_file(), (document, target)
 
 
-def test_architecture_and_benchmark_docs_contain_diagrams():
-    architecture = (ROOT / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
-    benchmark = (ROOT / "docs" / "BENCHMARK_REPORT.md").read_text(encoding="utf-8")
-    assert architecture.count("```mermaid") >= 4
-    assert "```mermaid" in benchmark
+def test_architecture_and_troubleshooting_docs_contain_diagrams():
+    architecture = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
+    troubleshooting = (ROOT / "docs" / "troubleshooting.md").read_text(encoding="utf-8")
+    assert architecture.count("```mermaid") >= 2
+    assert "```mermaid" in troubleshooting

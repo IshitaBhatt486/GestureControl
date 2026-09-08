@@ -3,9 +3,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gestureos.actions.action_mapper import ActionMapper
-from gestureos.gestures.hand_landmark_data import HandLandmarkData
-from gestureos.gestures.swipe_recognizer import SwipeRecognizer
+from handwave.actions.action_mapper import ActionMapper
+from handwave.gestures.hand_landmark_data import HandLandmarkData
+from handwave.gestures.swipe_recognizer import SwipeRecognizer
 
 
 class Clock:

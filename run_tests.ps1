@@ -4,12 +4,12 @@ Set-Location $projectRoot
 
 $python = Join-Path $projectRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $python)) {
-    throw "Virtual environment not found. Create .venv and install gestureos\requirements.txt first."
+    throw "Virtual environment not found. Create .venv and install handwave\requirements.txt first."
 }
 
 $reportDirectory = Join-Path $projectRoot "test-results"
 New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null
-$testTemp = Join-Path $projectRoot ".test-tmp\pytest"
+$testTemp = Join-Path $projectRoot ".test-tmp\pytest-$PID"
 New-Item -ItemType Directory -Force -Path $testTemp | Out-Null
 $env:TEMP = $testTemp
 $env:TMP = $testTemp

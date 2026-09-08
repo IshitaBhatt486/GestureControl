@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from gestureos.gestures.hand_landmark_data import HandLandmarkData
+from handwave.gestures.hand_landmark_data import HandLandmarkData
 
 
 def _point(x, y, z=0.0):

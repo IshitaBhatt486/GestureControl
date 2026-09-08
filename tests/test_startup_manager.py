@@ -1,5 +1,5 @@
-from gestureos.config.settings_manager import SettingsManager
-from gestureos.services.startup_manager import WindowsStartupManager
+from handwave.config.settings_manager import SettingsManager
+from handwave.services.startup_manager import WindowsStartupManager
 
 
 def test_enable_startup_creates_windows_launcher(tmp_path):
@@ -7,15 +7,15 @@ def test_enable_startup_creates_windows_launcher(tmp_path):
     startup = WindowsStartupManager(
         startup_folder=startup_folder,
         executable=r"C:\Python311\pythonw.exe",
-        project_root=r"C:\Apps\GestureOS",
+        project_root=r"C:\Apps\HandWave",
     )
 
     startup.enable()
 
     assert startup.is_enabled
     launcher = startup.launcher_path.read_text(encoding="utf-8")
-    assert 'cd /d "C:\\Apps\\GestureOS"' in launcher
-    assert '"C:\\Python311\\pythonw.exe" -m gestureos.main' in launcher
+    assert 'cd /d "C:\\Apps\\HandWave"' in launcher
+    assert '"C:\\Python311\\pythonw.exe" -m handwave.main' in launcher
 
 
 def test_setting_toggle_persists_and_removes_launcher(tmp_path):
@@ -45,4 +45,4 @@ def test_reboot_simulation_restores_missing_startup_launcher(tmp_path):
 
     assert rebooted_app.settings.startup_enabled
     assert rebooted_startup.is_enabled
-    assert "-m gestureos.main" in rebooted_startup.launcher_path.read_text(encoding="utf-8")
+    assert "-m handwave.main" in rebooted_startup.launcher_path.read_text(encoding="utf-8")

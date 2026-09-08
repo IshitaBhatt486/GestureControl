@@ -1,2 +1,0 @@
-"""GestureOS desktop application package."""
-

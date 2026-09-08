@@ -1,0 +1,2 @@
+"""HandWave desktop application package."""
+

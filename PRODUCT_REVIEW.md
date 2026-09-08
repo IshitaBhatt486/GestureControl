@@ -1,4 +1,4 @@
-# GestureOS 1.0.0-rc.1 Product Review
+# HandWave 1.0.0-rc.1 Product Review
 
 ## Release decision
 
@@ -114,8 +114,8 @@ signing.
 |---|---|---|
 | Full suite | `run_tests.cmd -q` | All tests pass; branch coverage >80% |
 | Benchmarks | `pytest -m benchmark --no-cov` | All latency regression gates pass |
-| Portable app | `dist/GestureOS.exe` | Builds and starts on clean Windows 10/11 |
-| Installer | `dist/GestureOS-1.0.0-rc.1-Setup.exe` | Install, launch, upgrade, uninstall pass |
+| Portable app | `dist/HandWave.exe` | Builds and starts on clean Windows 10/11 |
+| Installer | `dist/HandWave-1.0.0-rc.1-Setup.exe` | Install, launch, upgrade, uninstall pass |
 | Integrity | `dist/SHA256SUMS.txt` | Hashes match both published executables |
 | Privacy | Source/package inspection | No telemetry, account, or upload path |
 

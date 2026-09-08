@@ -1,4 +1,4 @@
-"""Render deterministic GestureOS screenshots for the documentation."""
+"""Render deterministic HandWave screenshots for the documentation."""
 
 from __future__ import annotations
 
@@ -17,10 +17,10 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import QApplication
 
-from gestureos.config.settings_manager import SettingsManager
-from gestureos.ui.main_window import MainWindow
-from gestureos.ui.settings_dialog import SettingsDialog
-from gestureos.vision.camera_manager import PipelineMetrics
+from handwave.config.settings_manager import SettingsManager
+from handwave.ui.main_window import MainWindow
+from handwave.ui.settings_dialog import SettingsDialog
+from handwave.vision.camera_manager import PipelineMetrics
 
 
 class DemoCamera(QObject):

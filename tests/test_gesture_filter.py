@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 
-from gestureos.actions.action_mapper import ActionMapper
-from gestureos.gestures.gesture_filter import GestureFilter
+from handwave.actions.action_mapper import ActionMapper
+from handwave.gestures.gesture_filter import GestureFilter
 
 
 class Clock:

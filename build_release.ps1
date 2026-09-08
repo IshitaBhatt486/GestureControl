@@ -5,14 +5,14 @@ Set-Location $projectRoot
 & ".\run_tests.cmd" -q
 if ($LASTEXITCODE -ne 0) { throw "Tests failed; release build stopped." }
 
-& ".\.venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean "GestureOS.spec"
+& ".\.venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean "HandWave.spec"
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "Clean build cache removal failed; retrying without deleting the cache."
-    & ".\.venv\Scripts\python.exe" -m PyInstaller --noconfirm "GestureOS.spec"
+    & ".\.venv\Scripts\python.exe" -m PyInstaller --noconfirm "HandWave.spec"
 }
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed." }
 
-$release = Join-Path $projectRoot "dist\GestureOS.exe"
+$release = Join-Path $projectRoot "dist\HandWave.exe"
 if (-not (Test-Path -LiteralPath $release)) { throw "Release executable was not created." }
 
 $nsisCandidates = @(
@@ -26,13 +26,13 @@ if (-not $makensis) {
     throw "NSIS was not found. Install it with: winget install --id NSIS.NSIS -e"
 }
 
-$version = & ".\.venv\Scripts\python.exe" -c "from gestureos.version import __version__; print(__version__)"
-if ($LASTEXITCODE -ne 0 -or -not $version) { throw "Unable to read GestureOS version." }
+$version = & ".\.venv\Scripts\python.exe" -c "from handwave.version import __version__; print(__version__)"
+if ($LASTEXITCODE -ne 0 -or -not $version) { throw "Unable to read HandWave version." }
 
-& $makensis "/DPRODUCT_VERSION=$version" "packaging\GestureOS.nsi"
+& $makensis "/DPRODUCT_VERSION=$version" "packaging\HandWave.nsi"
 if ($LASTEXITCODE -ne 0) { throw "NSIS installer build failed." }
 
-$installer = Join-Path $projectRoot "dist\GestureOS-$version-Setup.exe"
+$installer = Join-Path $projectRoot "dist\HandWave-$version-Setup.exe"
 if (-not (Test-Path -LiteralPath $installer)) { throw "Installer was not created." }
 
 $checksums = @($release, $installer) | ForEach-Object {

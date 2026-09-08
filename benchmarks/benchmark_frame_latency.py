@@ -1,4 +1,4 @@
-"""Compare overloaded FIFO buffering with GestureOS's latest-frame handoff."""
+"""Compare overloaded FIFO buffering with HandWave's latest-frame handoff."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 
-from gestureos.actions.action_queue import ActionQueue, ActionWorker
-from gestureos.vision.camera_manager import LatestFrameBuffer
+from handwave.actions.action_queue import ActionQueue, ActionWorker
+from handwave.vision.camera_manager import LatestFrameBuffer
 
 
 @dataclass(frozen=True)
