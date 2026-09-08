@@ -28,7 +28,7 @@ double clap can enable or pause recognition without touching the keyboard.
 - Static custom gestures: record a pose a few times, and HandWave builds a
   recognition profile for it that coexists with the built-in gestures.
 - A bounded action-audit log showing every recognized gesture, the action
-  taken, and — when nothing happened — exactly why (cooldown, re-arm, hold
+  taken, and when nothing happened, exactly why (cooldown, re-arm, hold
   duration, disabled, or an execution error).
 - Non-blocking capture, recognition, and action worker threads; a
   capacity-one latest-frame buffer prevents latency buildup under load.
