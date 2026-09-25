@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QVBoxLayout, QWidget
+from handwave.ui.gesture_icons import gesture_text
 
 
 class DiagnosticsPage(QWidget):
@@ -15,6 +16,15 @@ class DiagnosticsPage(QWidget):
         ("cpu", "CPU", "0.0%", "process utilization"),
         ("memory", "Memory", "0.0 MB", "working set"),
         ("threads", "Active threads", "0", "pipeline workers"),
+        ("microphone", "Microphone", "Not started", "selected input device"),
+        ("mic_stream", "Mic stream", "stopped", "capture health"),
+        ("mic_rms", "Mic RMS", "0.00000", "current input level"),
+        ("mic_peak", "Mic peak", "0.00000", "current input peak"),
+        ("last_clap", "Last clap", "Never", "monotonic timestamp"),
+        ("cursor_overlay", "Cursor overlay", "Idle", "visual-assist state"),
+        ("overlay_fps", "Overlay FPS", "0.0", "overlay renders / second"),
+        ("overlay_cpu", "Overlay CPU", "0.000%", "paint-time CPU estimate"),
+        ("overlay_memory", "Overlay memory", "0.0 KB", "ARGB overlay surface estimate"),
     )
 
     def __init__(self, parent=None) -> None:
@@ -23,7 +33,7 @@ class DiagnosticsPage(QWidget):
 
         title = QLabel("Diagnostics")
         title.setObjectName("pageTitle")
-        subtitle = QLabel("Live performance and recognition telemetry")
+        subtitle = QLabel("Live performance and recognition diagnostics")
         subtitle.setObjectName("pageSubtitle")
 
         self.live_status = QLabel("●  PAUSED")
@@ -87,9 +97,25 @@ class DiagnosticsPage(QWidget):
     def update_gesture(self, raw: str, stable: str) -> None:
         current = stable if stable != "Unknown" else raw
         self.current_gesture.setText(
-            "No gesture detected" if current == "Unknown" else current
+            "No gesture detected" if current == "Unknown" else gesture_text(current)
         )
         self.gesture_detail.setText(f"Raw  {raw}   •   Stable  {stable}")
+
+    def update_microphone(self, status: object) -> None:
+        """Render scalar microphone health data only; audio is never retained."""
+        self._values["microphone"].setText(getattr(status, "device", None) or "Windows default")
+        self._values["mic_stream"].setText(getattr(status, "stream_status", "unknown"))
+        self._values["mic_rms"].setText(f"{getattr(status, 'rms', 0.0):.5f}")
+        self._values["mic_peak"].setText(f"{getattr(status, 'input_level', 0.0):.5f}")
+        last_clap = getattr(status, "last_clap_time", None)
+        self._values["last_clap"].setText("Never" if last_clap is None else f"{last_clap:.3f}")
+
+    def update_cursor_overlay(self, state: object, metrics: object) -> None:
+        """Show overlay-local measurements; no pipeline worker is sampled here."""
+        self._values["cursor_overlay"].setText(str(getattr(state, "value", state)).replace("_", " ").title())
+        self._values["overlay_fps"].setText(f"{getattr(metrics, 'render_fps', 0.0):.1f}")
+        self._values["overlay_cpu"].setText(f"{getattr(metrics, 'paint_cpu_percent', 0.0):.3f}%")
+        self._values["overlay_memory"].setText(f"{getattr(metrics, 'framebuffer_kb', 0.0):.1f} KB")
 
     def set_pipeline_active(self, active: bool) -> None:
         self.live_status.setText("●  LIVE" if active else "●  PAUSED")

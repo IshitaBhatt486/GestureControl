@@ -31,6 +31,7 @@ from handwave.actions.action_definition import (
 )
 from handwave.config.gesture_config import GESTURES
 from handwave.config.settings_manager import AppSettings
+from handwave.ui.gesture_icons import gesture_icon, gesture_text
 
 _TEXT_VALUE_TYPES = {"key", "hotkey", "text", "command"}
 
@@ -42,7 +43,9 @@ class ActionEditorRow(QWidget):
         super().__init__()
         self.gesture = gesture
 
-        self.enabled_checkbox = QCheckBox(gesture)
+        self.enabled_checkbox = QCheckBox(gesture_text(gesture))
+        self.enabled_checkbox.setIcon(gesture_icon(gesture))
+        self.enabled_checkbox.setAccessibleName(gesture)
         self.enabled_checkbox.setChecked(enabled)
 
         self.type_combo = QComboBox()
@@ -61,18 +64,13 @@ class ActionEditorRow(QWidget):
         self.text_value.setPlaceholderText("e.g. ctrl+shift+s, Space, hello world, notepad.exe")
 
         self.value_stack = QStackedWidget()
-        self.value_stack.addWidget(QLabel(""))  # none
+        self.value_stack.addWidget(QLabel(""))
         self.value_stack.addWidget(self.media_combo)
-        self.value_stack.addWidget(self.text_value)  # key
+        self.value_stack.addWidget(self.text_value)
         self.value_stack.addWidget(self.text_value)  # hotkey (shared widget, index unused directly)
         self.value_stack.addWidget(self.mouse_combo)
-        self.value_stack.addWidget(self.text_value)  # text
-        self.value_stack.addWidget(self.text_value)  # command
-
-        self.confirmation_checkbox = QCheckBox("Confirm")
-        self.confirmation_checkbox.setToolTip(
-            "Require a hold before this action fires (recommended for destructive actions)"
-        )
+        self.value_stack.addWidget(self.text_value)
+        self.value_stack.addWidget(self.text_value)
 
         self.hold_spin = QDoubleSpinBox()
         self.hold_spin.setRange(0.0, 10.0)
@@ -98,7 +96,6 @@ class ActionEditorRow(QWidget):
         row.addWidget(self.enabled_checkbox, 2)
         row.addWidget(self.type_combo, 2)
         row.addWidget(self.value_stack, 3)
-        row.addWidget(self.confirmation_checkbox, 1)
         row.addWidget(self.hold_spin, 1)
         row.addWidget(self.cooldown_spin, 1)
 
@@ -111,8 +108,9 @@ class ActionEditorRow(QWidget):
         elif binding.type in _TEXT_VALUE_TYPES:
             value = binding.value
             self.text_value.setText(" ".join(value) if isinstance(value, tuple) else str(value))
-        self.confirmation_checkbox.setChecked(binding.requires_confirmation)
-        self.hold_spin.setValue(binding.hold_duration)
+        # Confirmation is deliberately not exposed in settings.  Existing
+        # confirmed actions retain their safe, effective hold duration.
+        self.hold_spin.setValue(binding.effective_hold_duration)
         self.cooldown_spin.setValue(binding.cooldown if binding.cooldown is not None else 0.0)
 
     def _current_type(self) -> str:
@@ -130,16 +128,16 @@ class ActionEditorRow(QWidget):
             "command": self.text_value,
         }[action_type]
         self.value_stack.setCurrentWidget(widget)
-        dangerous = action_type == "command"
-        if dangerous:
-            self.confirmation_checkbox.setChecked(True)
-        self.confirmation_checkbox.setEnabled(not dangerous)
+        dangerous = action_type == "command" or (
+            action_type == "hotkey" and self.text_value.text().strip().lower() in {"alt+f4", "ctrl+alt+delete"}
+        )
+        if dangerous and self.hold_spin.value() < ActionDefinition.CONFIRMATION_HOLD:
+            self.hold_spin.setValue(ActionDefinition.CONFIRMATION_HOLD)
 
     def _set_row_enabled(self, enabled: bool) -> None:
         for widget in (
             self.type_combo,
             self.value_stack,
-            self.confirmation_checkbox,
             self.hold_spin,
             self.cooldown_spin,
         ):
@@ -158,10 +156,13 @@ class ActionEditorRow(QWidget):
         else:
             value = ""
         cooldown = self.cooldown_spin.value()
+        value_text = str(value).strip().lower()
+        if action_type == "command" or (action_type == "hotkey" and value_text in {"alt+f4", "ctrl+alt+delete"}):
+            self.hold_spin.setValue(max(self.hold_spin.value(), ActionDefinition.CONFIRMATION_HOLD))
         return {
             "type": action_type,
             "value": value,
-            "requires_confirmation": self.confirmation_checkbox.isChecked(),
+            "requires_confirmation": False,
             "hold_duration": self.hold_spin.value(),
             "cooldown": cooldown if cooldown > 0.0 else None,
         }
@@ -193,6 +194,8 @@ class SettingsDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(self._build_general_tab(settings), "General")
         tabs.addTab(self._build_camera_tab(settings), "Camera")
+        tabs.addTab(self._build_microphone_tab(settings), "Microphone")
+        tabs.addTab(self._build_cursor_control_tab(settings), "Cursor Control")
         tabs.addTab(self._build_gestures_tab(settings), "Gestures && Actions")
         tabs.addTab(self._build_appearance_tab(settings), "Appearance")
 
@@ -227,12 +230,16 @@ class SettingsDialog(QDialog):
         self.auto_switch_profiles.setToolTip(
             "Apply a matching application profile's overrides when that application is focused"
         )
+        self.exit_on_close = QCheckBox("Exit HandWave when I close the window")
+        self.exit_on_close.setChecked(settings.exit_on_close)
+        self.exit_on_close.setToolTip("Stops recognition and the microphone instead of keeping HandWave in the system tray")
 
         widget = QWidget()
         form = QFormLayout(widget)
         form.addRow("Sensitivity", self.sensitivity)
         form.addRow("Cooldown", self.cooldown)
         form.addRow(self.auto_switch_profiles)
+        form.addRow(self.exit_on_close)
         return widget
 
     def _build_camera_tab(self, settings: AppSettings) -> QWidget:
@@ -247,6 +254,44 @@ class SettingsDialog(QDialog):
         note = QLabel("Applies the next time recognition is enabled.")
         note.setWordWrap(True)
         note.setStyleSheet("color: #94a3b8;")
+        form.addRow(note)
+        return widget
+
+    def _build_microphone_tab(self, settings: AppSettings) -> QWidget:
+        self.microphone_device = QSpinBox()
+        self.microphone_device.setRange(-1, 64)
+        self.microphone_device.setSpecialValueText("Windows default")
+        self.microphone_device.setValue(-1 if settings.microphone_device is None else settings.microphone_device)
+        self.clap_min_peak = QDoubleSpinBox(); self.clap_min_peak.setRange(0.001, 1.0); self.clap_min_peak.setDecimals(3); self.clap_min_peak.setSingleStep(0.005); self.clap_min_peak.setValue(settings.clap_min_peak)
+        self.clap_noise_multiplier = QDoubleSpinBox(); self.clap_noise_multiplier.setRange(1.0, 20.0); self.clap_noise_multiplier.setSingleStep(0.1); self.clap_noise_multiplier.setValue(settings.clap_noise_multiplier)
+        self.double_clap_min_interval = QDoubleSpinBox(); self.double_clap_min_interval.setRange(0.05, 2.0); self.double_clap_min_interval.setSingleStep(0.05); self.double_clap_min_interval.setSuffix(" s"); self.double_clap_min_interval.setValue(settings.double_clap_min_interval)
+        self.double_clap_max_interval = QDoubleSpinBox(); self.double_clap_max_interval.setRange(0.10, 3.0); self.double_clap_max_interval.setSingleStep(0.05); self.double_clap_max_interval.setSuffix(" s"); self.double_clap_max_interval.setValue(settings.double_clap_max_interval)
+        widget = QWidget(); form = QFormLayout(widget)
+        form.addRow("Microphone device index", self.microphone_device)
+        form.addRow("Clap minimum peak", self.clap_min_peak)
+        form.addRow("Noise multiplier", self.clap_noise_multiplier)
+        form.addRow("Minimum double-clap interval", self.double_clap_min_interval)
+        form.addRow("Maximum double-clap interval", self.double_clap_max_interval)
+        note = QLabel("Use Microphone Test to see the selected device and live levels. Changes apply immediately after saving.")
+        note.setWordWrap(True); form.addRow(note)
+        return widget
+
+    def _build_cursor_control_tab(self, settings: AppSettings) -> QWidget:
+        """Controls that affect the visual, calibrated cursor feedback."""
+        self.show_cursor_overlay = QCheckBox("Show Cursor Overlay")
+        self.show_cursor_overlay.setChecked(settings.cursor_assist_overlay_enabled)
+        self.show_cursor_overlay.setAccessibleName("Show Cursor Overlay")
+        self.show_cursor_overlay.setToolTip(
+            "Show a click-through visual marker at HandWave's calibrated cursor position"
+        )
+        note = QLabel(
+            "The overlay is visual feedback only. It does not replace or move the Windows cursor."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #94a3b8;")
+        widget = QWidget()
+        form = QFormLayout(widget)
+        form.addRow(self.show_cursor_overlay)
         form.addRow(note)
         return widget
 
@@ -291,9 +336,32 @@ class SettingsDialog(QDialog):
         self.theme_combo.addItem("Light", "light")
         self.theme_combo.setCurrentIndex(self.theme_combo.findData(settings.theme))
 
+        self.show_fingerprint_indicator = QCheckBox("Show fingerprint indicator")
+        self.show_fingerprint_indicator.setChecked(settings.show_fingerprint_indicator)
+        self.show_fingerprint_indicator.setToolTip(
+            "Shows a touchless fingertip-tracking dot over the camera preview; it does not indicate real touch"
+        )
+        self.fingerprint_indicator_size = QSpinBox()
+        self.fingerprint_indicator_size.setRange(8, 48)
+        self.fingerprint_indicator_size.setSuffix(" px")
+        self.fingerprint_indicator_size.setValue(settings.fingerprint_indicator_size)
+        self.fingerprint_indicator_opacity = QDoubleSpinBox()
+        self.fingerprint_indicator_opacity.setRange(0.2, 1.0)
+        self.fingerprint_indicator_opacity.setSingleStep(0.05)
+        self.fingerprint_indicator_opacity.setValue(settings.fingerprint_indicator_opacity)
+        self.fingerprint_indicator_fade_duration_ms = QSpinBox()
+        self.fingerprint_indicator_fade_duration_ms.setRange(50, 2000)
+        self.fingerprint_indicator_fade_duration_ms.setSingleStep(50)
+        self.fingerprint_indicator_fade_duration_ms.setSuffix(" ms")
+        self.fingerprint_indicator_fade_duration_ms.setValue(settings.fingerprint_indicator_fade_duration_ms)
+
         widget = QWidget()
         form = QFormLayout(widget)
         form.addRow("Theme", self.theme_combo)
+        form.addRow(self.show_fingerprint_indicator)
+        form.addRow("Indicator size", self.fingerprint_indicator_size)
+        form.addRow("Indicator opacity", self.fingerprint_indicator_opacity)
+        form.addRow("Indicator fade", self.fingerprint_indicator_fade_duration_ms)
         return widget
 
     def values(self) -> dict[str, object]:
@@ -301,8 +369,19 @@ class SettingsDialog(QDialog):
             "gesture_sensitivity": self.sensitivity.value(),
             "gesture_cooldown": self.cooldown.value(),
             "auto_switch_profiles": self.auto_switch_profiles.isChecked(),
+            "exit_on_close": self.exit_on_close.isChecked(),
             "camera_index": self.camera_index.value(),
             "theme": self.theme_combo.currentData(),
+            "show_fingerprint_indicator": self.show_fingerprint_indicator.isChecked(),
+            "fingerprint_indicator_size": self.fingerprint_indicator_size.value(),
+            "fingerprint_indicator_opacity": self.fingerprint_indicator_opacity.value(),
+            "fingerprint_indicator_fade_duration_ms": self.fingerprint_indicator_fade_duration_ms.value(),
+            "microphone_device": None if self.microphone_device.value() < 0 else self.microphone_device.value(),
+            "clap_min_peak": self.clap_min_peak.value(),
+            "clap_noise_multiplier": self.clap_noise_multiplier.value(),
+            "double_clap_min_interval": self.double_clap_min_interval.value(),
+            "double_clap_max_interval": self.double_clap_max_interval.value(),
+            "cursor_assist_overlay_enabled": self.show_cursor_overlay.isChecked(),
             "gesture_bindings": {
                 gesture: row.action_dict() for gesture, row in self._gesture_rows.items()
             },

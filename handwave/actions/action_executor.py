@@ -22,6 +22,14 @@ logger = logging.getLogger(__name__)
 class ActionExecutor:
     """Execute one validated action locally without invoking a command shell."""
 
+    SAFE_NAVIGATION_INPUTS = {
+        ("key", "esc"),
+        ("hotkey", "alt+tab"),
+        ("hotkey", "win+tab"),
+        ("hotkey", "win+ctrl+left"),
+        ("hotkey", "win+ctrl+right"),
+    }
+
     def __init__(
         self,
         pyautogui_module: Any = pyautogui,
@@ -41,13 +49,13 @@ class ActionExecutor:
         if action.type == "none":
             return
         if action.type == "media":
-            self._execute_media(str(action.value))
+            self._safe_input(action, lambda: self._execute_media(str(action.value)))
         elif action.type == "key":
-            self._pyautogui.press(str(action.value))
+            self._safe_input(action, lambda: self._execute_key(str(action.value)))
         elif action.type == "hotkey":
-            self._pyautogui.hotkey(*parse_hotkey(str(action.value)))
+            self._safe_input(action, lambda: self._execute_hotkey(str(action.value)))
         elif action.type == "mouse":
-            self._execute_mouse(str(action.value))
+            self._safe_input(action, lambda: self._execute_mouse(str(action.value)))
         elif action.type == "text":
             self._pyautogui.write(str(action.value))
         elif action.type == "command":
@@ -55,6 +63,41 @@ class ActionExecutor:
             self._program_launcher(list(action.value), shell=False)
         else:  # Defensive guard if an object bypassed ActionDefinition validation.
             raise ValueError(f"Unsupported action type: {action.type}")
+
+    @staticmethod
+    def _safe_input(action: ActionDefinition, callback: Callable[[], None]) -> None:
+        """Fail closed when Windows input injection is unavailable.
+
+        Navigation bindings are ordinary, configurable key/hotkey actions. If
+        the OS rejects input (for example on a locked desktop), logging and a
+        no-op are safer than interrupting the recognition worker or launching
+        an application-specific fallback.
+        """
+        try:
+            callback()
+        except Exception as exc:
+            if (action.type, str(action.value)) not in ActionExecutor.SAFE_NAVIGATION_INPUTS:
+                raise
+            logger.warning("Local input action unavailable (%s): %s", action.describe(), exc)
+
+    def _execute_key(self, value: str) -> None:
+        try:
+            self._pyautogui.press(value)
+        except Exception:
+            if self._keyboard is None:
+                raise
+            logger.info("PyAutoGUI key injection failed; using keyboard fallback")
+            self._keyboard.send(value)
+
+    def _execute_hotkey(self, value: str) -> None:
+        keys = parse_hotkey(value)
+        try:
+            self._pyautogui.hotkey(*keys)
+        except Exception:
+            if self._keyboard is None:
+                raise
+            logger.info("PyAutoGUI hotkey injection failed; using keyboard fallback")
+            self._keyboard.send("+".join(keys))
 
     def _execute_media(self, value: str) -> None:
         pyautogui_keys = {

@@ -58,10 +58,11 @@ flowchart TB
     Engine --> Landmarks[HandState / HandLandmarkData]
     Engine --> TwoHand[TwoHandRecognizer]
     Engine --> Custom[CustomGestureMatcher]
-    Recognition --> Filter[GestureFilter]
-    Recognition --> Swipe[SwipeRecognizer]
-    Recognition --> Pinch[PinchController]
-    Recognition --> Mapper[ActionMapper]
+    Recognition --> Runtime[RecognitionActionRuntime]
+    Runtime --> Filter[GestureFilter]
+    Runtime --> Swipe[SwipeRecognizer]
+    Runtime --> Pinch[PinchController]
+    Runtime --> Mapper[ActionMapper]
     Mapper --> Executor[ActionExecutor]
     Mapper --> Queue[ActionQueue]
     Pinch --> Queue
@@ -92,8 +93,10 @@ call can never stall recognition (see [actions.md](actions.md)).
 3. `GestureEngine.recognize_hands()` — the single recognition entry point used
    both live and by `tools/replay_gesture.py` — runs built-in pattern
    matching, an optional custom-gesture matcher, and `TwoHandRecognizer`.
-4. Arbitration picks one action name, in priority order: **two-hand gesture >
-   pinch > swipe > static gesture** (see [gesture-recognition.md](gesture-recognition.md)).
+4. `RecognitionActionRuntime` filters, evaluates pinch and swipe motion, and
+   uses the gesture arbitration policy to choose one action name: **two-hand
+   gesture > pinch > swipe > static gesture** (see
+   [gesture-recognition.md](gesture-recognition.md)).
 5. `ActionMapper.execute()` applies cooldown/re-arm/hold-duration rules and
    either runs the bound `ActionDefinition` (via the queue) or records why it
    didn't (`ActionOutcome.blocked_reason`).

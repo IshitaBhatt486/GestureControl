@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "templates": [
+    {
+      "template_id": "3679f82a2fbe4fcbbe84afa9e85f0b03",
+      "name": "General",
+      "gesture_sensitivity": null,
+      "gesture_cooldown": null,
+      "enabled_gestures": {},
+      "mouse_settings": {},
+      "pinch_settings": {},
+      "clap_settings": {},
+      "two_hand_settings": {},
+      "custom_gesture_ids": [],
+      "application_mappings": {},
+      "gesture_bindings": {}
+    }
+  ],
+  "active_template_id": "3679f82a2fbe4fcbbe84afa9e85f0b03"
+}

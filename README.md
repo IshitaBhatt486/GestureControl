@@ -48,7 +48,9 @@ double clap can enable or pause recognition without touching the keyboard.
 | Thumbs Down | Volume Down |
 | Peace Sign | Next Track |
 | Pointing | Previous Track |
-| Swipe Left / Right | Previous / Next Track |
+| Swipe Left / Right | Previous / Next virtual desktop |
+| Finger swipe up/down | Latest window / collapse overview |
+| Hand swipe up/down | Show all windows / collapse overview |
 | Pinch and move vertically | Adjust volume |
 | Both palms open, moving apart/together | Two-hand gesture (configurable) |
 | Double clap | Enable or pause recognition |
@@ -105,8 +107,8 @@ overload, not data loss.
 - Camera frames and microphone samples are processed locally; neither is
   ever uploaded or recorded to disk by default.
 - No networking, telemetry, accounts, or cloud dependencies.
-- Custom-gesture recording stores normalized landmark coordinates, never
-  video (see [docs/gesture-recognition.md](docs/gesture-recognition.md)).
+- Custom-gesture recording stores normalized landmark-derived features and
+  metadata, never video (see [docs/gesture-recognition.md](docs/gesture-recognition.md)).
 - Program-launch actions are validated and always require a confirmation
   hold before they can fire (see [docs/actions.md](docs/actions.md)).
 

@@ -7,6 +7,17 @@ from handwave.gestures.two_hand_recognizer import TwoHandDetection
 from handwave.vision.camera_manager import CameraManager, CameraWorker, GestureWorker, LatestFrameBuffer
 
 
+def test_profile_change_discards_pending_actions_before_updating_bindings():
+    manager = CameraManager()
+    manager._action_queue = MagicMock()
+    manager._gesture_worker = MagicMock()
+
+    manager.apply_profile_settings(AppSettings(gesture_cooldown=2.5))
+
+    manager._action_queue.discard_pending.assert_called_once_with()
+    manager._gesture_worker.action_mapper.apply_settings.assert_called_once()
+
+
 def test_worker_releases_camera(qtbot):
     stop_event = MagicMock()
     stop_event.is_set.side_effect = [False, True]
@@ -31,6 +42,22 @@ def test_worker_reports_camera_open_error(qtbot):
             worker.run()
 
     assert "Could not open webcam" in signal.args[0]
+    capture.release.assert_called_once()
+
+
+def test_worker_reports_camera_disconnect_and_releases_device(qtbot):
+    capture = MagicMock()
+    capture.isOpened.return_value = True
+    capture.read.return_value = (False, None)
+    stop_event = MagicMock()
+    stop_event.is_set.return_value = False
+    worker = CameraWorker(0, stop_event)
+
+    with patch("handwave.vision.camera_manager.cv2.VideoCapture", return_value=capture):
+        with qtbot.waitSignal(worker.error) as signal:
+            worker.run()
+
+    assert "stopped returning frames" in signal.args[0]
     capture.release.assert_called_once()
 
 
@@ -97,6 +124,32 @@ def test_hands_detected_and_per_hand_poses_reach_pipeline_metrics(qtbot):
     assert metrics[0].hands_detected == 2
     assert metrics[0].left_hand_pose == "Peace Sign"
     assert metrics[0].right_hand_pose == "Open Palm"
+
+
+def test_worker_forwards_up_to_two_normalized_index_fingertips(qtbot):
+    stop_event = MagicMock()
+    stop_event.is_set.side_effect = [False, True]
+    buffer = LatestFrameBuffer()
+    buffer.put(np.zeros((8, 8, 3), dtype=np.uint8))
+    engine = MagicMock()
+    first_tip = MagicMock(x=0.2, y=0.3)
+    second_tip = MagicMock(x=0.8, y=0.7)
+    first_hand = MagicMock()
+    second_hand = MagicMock()
+    first_hand.landmarks.get_landmarks.return_value = [MagicMock()] * 8 + [first_tip]
+    second_hand.landmarks.get_landmarks.return_value = [MagicMock()] * 8 + [second_tip]
+    engine.process.return_value = (
+        np.zeros((8, 8, 3), dtype=np.uint8),
+        GestureResult(hands=(first_hand, second_hand)),
+    )
+    worker = GestureWorker(buffer, stop_event, AppSettings(overlay_enabled=False))
+    fingertips = []
+    worker.fingertips_ready.connect(fingertips.append)
+
+    with patch("handwave.gestures.gesture_engine.GestureEngine", return_value=engine):
+        worker.run()
+
+    assert fingertips == [[(0.2, 0.3), (0.8, 0.7)]]
 
 
 def test_apply_profile_settings_updates_running_worker_without_recreating_it():

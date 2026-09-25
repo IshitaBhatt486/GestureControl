@@ -72,7 +72,7 @@ def test_apply_settings_swaps_bindings_in_place_without_recreating_mapper():
     )
 
     assert mapper.cooldown == 5.0
-    assert mapper._executor is original_executor  # never recreated
+    assert mapper._executor is original_executor
     assert mapper.execute("Open Palm")
     gui.press.assert_called_once_with("volumemute")
 
@@ -81,7 +81,7 @@ def test_apply_settings_partial_update_only_changes_given_fields():
     mapper, _, _ = _mapper()
     mapper.apply_settings(cooldown=3.0)
     assert mapper.cooldown == 3.0
-    assert mapper._enabled_gestures  # unchanged, still populated
+    assert mapper._enabled_gestures
 
 
 def test_apply_settings_rejects_negative_cooldown():
@@ -125,7 +125,7 @@ def test_last_outcome_reports_no_action_bound():
         pyautogui_module=gui,
         keyboard_module=MagicMock(),
         gesture_bindings={"Fist": "none"},
-        enabled_gestures={"Fist": True},  # enabled, but with no action bound
+        enabled_gestures={"Fist": True},
     )
     assert not mapper.execute("Fist")
     assert mapper.last_outcome.blocked_reason == "no action bound"

@@ -49,7 +49,7 @@ def test_recognizes_all_supported_gestures():
         "Thumbs Up": _pose({"thumb"}, thumb_up=True),
         "Thumbs Down": _pose({"thumb"}, thumb_down=True),
         "Peace Sign": _pose({"index", "middle"}),
-        "Pointing": _pose({"index"}),
+        "Pointing Up": _pose({"index"}),
     }
     for expected, landmarks in cases.items():
         detection = engine.detect_gesture(landmarks)
@@ -68,7 +68,7 @@ def test_confidence_updates_with_live_joint_geometry():
     engine = _engine()
     straight = engine.detect_gesture(_pose({"index"}, bend=0.0))
     less_straight = engine.detect_gesture(_pose({"index"}, bend=0.04))
-    assert straight.name == less_straight.name == "Pointing"
+    assert straight.name == less_straight.name == "Pointing Up"
     assert straight.confidence != less_straight.confidence
 
 

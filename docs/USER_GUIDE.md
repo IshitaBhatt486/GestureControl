@@ -7,7 +7,7 @@ or Start Menu. On first launch, a short walkthrough explains gestures, tray mode
 and double-clap activation.
 
 Windows may ask for camera and microphone permission. Both permissions are needed
-for the complete experience. Gesture recognition can still be started manually if
+for the complete experience() Gesture recognition can still be started manually if
 microphone access is unavailable.
 
 ## 2. Dashboard

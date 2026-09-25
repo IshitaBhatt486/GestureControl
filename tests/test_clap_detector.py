@@ -45,7 +45,7 @@ def test_too_fast_claps_do_not_trigger():
     detections = []
     detector.double_clap.connect(lambda: detections.append(True))
     detector.process_audio(_clap(), timestamp=0.0)
-    detector.process_audio(_clap(), timestamp=0.15)  # inside the refractory/min-separation window
+    detector.process_audio(_clap(), timestamp=0.08)  # inside the refractory/min-separation window
     assert detections == []
 
 
@@ -73,7 +73,7 @@ def test_peaks_outside_timing_window_do_not_trigger():
     detector.double_clap.connect(lambda: detections.append(True))
 
     detector.process_audio(_clap(), timestamp=0.0)
-    detector.process_audio(_clap(), timestamp=0.15)
+    detector.process_audio(_clap(), timestamp=0.08)
     detector.process_audio(_clap(), timestamp=1.2)
     assert detections == []
 
@@ -130,6 +130,7 @@ def test_calibration_derives_baseline_and_threshold():
     assert result.sample_count == 20
     assert result.ambient_rms == pytest.approx(detector._noise_floor)
     assert result.threshold >= detector.min_peak
+    assert detector.threshold == pytest.approx(result.threshold)
 
 
 def test_calibration_samples_never_trigger_a_clap():
@@ -158,6 +159,45 @@ def test_status_reports_input_level_and_availability():
     detector.process_audio(_clap(amplitude=0.6), timestamp=0.0)
     status_after = detector.status()
     assert status_after.input_level == pytest.approx(0.6)
+    assert status_after.rms > 0
+    assert status_after.last_clap_time == pytest.approx(0.0)
+
+
+def test_configurable_double_clap_window_and_threshold():
+    detector = ClapDetector(min_peak=0.05, min_clap_separation=0.2, max_clap_separation=0.8)
+    assert not detector.process_audio(_clap(0.1), timestamp=0.0)
+    assert detector.process_audio(_clap(0.1), timestamp=0.5)
+    detector.configure(device=None, min_peak=0.08, noise_multiplier=3.0, min_clap_separation=0.3, max_clap_separation=0.9)
+    assert detector.min_peak == pytest.approx(0.08)
+    assert detector.min_clap_separation == pytest.approx(0.3)
+
+
+def test_start_validates_and_reports_selected_microphone(qtbot):
+    detector = ClapDetector(device=3)
+    stream = MagicMock()
+    module = MagicMock()
+    module.query_devices.return_value = {"name": "Test microphone", "max_input_channels": 1}
+    module.InputStream.return_value = stream
+    with patch("handwave.services.clap_detector.sd", module):
+        detector.start()
+    assert module.query_devices.call_args.args == (3, "input")
+    assert detector.status().device == "Test microphone"
+    assert detector.status().stream_status == "running"
+    detector.stop()
+
+
+def test_default_fallback_never_uses_stereo_mix_for_clap_capture():
+    detector = ClapDetector()
+    module = MagicMock()
+    module.default.device = [1, 3]
+    module.query_devices.return_value = [
+        {"name": "Microphone Array", "max_input_channels": 2},
+        {"name": "Stereo Mix", "max_input_channels": 2},
+        {"name": "Speaker loopback", "max_input_channels": 2},
+        {"name": "USB Microphone", "max_input_channels": 1},
+    ]
+    with patch("handwave.services.clap_detector.sd", module):
+        assert detector._input_candidates() == [1, 0, 3]
 
 
 def test_start_without_sounddevice_reports_a_clear_error(qtbot):
@@ -171,6 +211,20 @@ def test_start_without_sounddevice_reports_a_clear_error(qtbot):
     assert not detector.is_listening
     assert "sounddevice" in errors[0]
     assert detector.status().error is not None
+
+
+def test_recoverable_input_overflow_does_not_stop_audio_capture(qtbot):
+    detector = ClapDetector()
+    detector._stream = MagicMock()
+    detector._stream_status = "running"
+    faults = []
+    detector.stream_fault.connect(faults.append)
+
+    detector._audio_callback(np.zeros(256, dtype=np.float32), 256, None, "input overflow")
+
+    assert detector.is_listening
+    assert detector.status().stream_status == "degraded"
+    assert faults == []
 
 
 def test_device_failure_is_recovered_from_without_crashing(qtbot):
@@ -212,3 +266,25 @@ def test_process_audio_never_stores_raw_samples():
     detector.process_audio(_clap(), timestamp=0.0)
     for value in vars(detector).values():
         assert not isinstance(value, np.ndarray)
+
+
+@pytest.mark.parametrize("amplitude", [0.06, 0.3, 0.9])
+def test_adaptive_detector_accepts_quiet_normal_and_loud_double_claps(amplitude):
+    detector = ClapDetector()
+    rng = np.random.default_rng(42)
+    for index in range(12):
+        detector.process_audio(_quiet_noise(rng, level=0.005), timestamp=index * 0.05)
+    assert not detector.process_audio(_clap(amplitude), timestamp=1.0)
+    assert detector.process_audio(_clap(amplitude), timestamp=1.45)
+
+
+def test_continuous_loud_sound_and_random_keyboard_peaks_do_not_trigger():
+    detector = ClapDetector()
+    loud = np.full(256, 0.4, dtype=np.float32)
+    for index in range(20):
+        assert not detector.process_audio(loud, timestamp=index * 0.05)
+    rng = np.random.default_rng(5)
+    for index in range(20, 50):
+        keyboard = _quiet_noise(rng, level=0.03)
+        keyboard[::32] = 0.09  # repeated small mechanical peaks, not a transient clap pair
+        assert not detector.process_audio(keyboard, timestamp=index * 0.05)

@@ -11,8 +11,16 @@ GESTURES = (
     "Thumbs Down",
     "Peace Sign",
     "Pointing",
+    "Pointing Up",
+    "Pointing Down",
+    "Pointing Left",
+    "Pointing Right",
     "Swipe Left",
     "Swipe Right",
+    "Finger Swipe Up",
+    "Hand Swipe Up",
+    "Finger Swipe Down",
+    "Hand Swipe Down",
 )
 
 ACTIONS = {
@@ -27,8 +35,16 @@ DEFAULT_GESTURE_BINDINGS = {
     "Thumbs Down": "volume_down",
     "Peace Sign": "next_track",
     "Pointing": "previous_track",
-    "Swipe Left": "previous_track",
-    "Swipe Right": "next_track",
+    "Pointing Up": "volume_up",
+    "Pointing Down": "volume_down",
+    "Pointing Left": "previous_track",
+    "Pointing Right": "next_track",
+    "Swipe Left": {"type": "hotkey", "value": "win+ctrl+left"},
+    "Swipe Right": {"type": "hotkey", "value": "win+ctrl+right"},
+    "Finger Swipe Up": {"type": "hotkey", "value": "alt+tab"},
+    "Hand Swipe Up": {"type": "hotkey", "value": "win+tab"},
+    "Finger Swipe Down": {"type": "key", "value": "esc"},
+    "Hand Swipe Down": {"type": "key", "value": "esc"},
 }
 
 DEFAULT_ENABLED_GESTURES = {

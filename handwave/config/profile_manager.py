@@ -47,8 +47,6 @@ class ProfileManager:
         self.active_profile_id: str | None = None
         self._load()
 
-    # -- persistence -----------------------------------------------------
-
     def _load(self) -> None:
         for candidate in (self.path, self._backup_path):
             if not candidate.exists():
@@ -83,8 +81,6 @@ class ProfileManager:
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         atomic_replace(temporary, self.path)
-
-    # -- CRUD --------------------------------------------------------------
 
     def list_profiles(self) -> list[Profile]:
         return list(self.profiles.values())

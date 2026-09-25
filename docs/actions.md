@@ -17,6 +17,13 @@ constructs OS calls directly. Supported types:
 | `text` | a string, 1-1000 chars | typed via pyautogui |
 | `command` | a program + arguments | **always** requires confirmation or hold (see below) |
 
+Windows navigation defaults use the existing `key` and `hotkey` action types
+(`Esc`, `Alt+Tab`, `Win+Tab`, and `Win+Ctrl+Left/Right`); they are configured
+like every other gesture binding rather than executed by a recognizer. If local
+input injection is unavailable, `ActionExecutor` logs the failure and safely
+does nothing. No application-specific automation or installed application is
+assumed.
+
 ## Safety
 
 - `command` actions are parsed into an argv list (`shlex.split`) and launched

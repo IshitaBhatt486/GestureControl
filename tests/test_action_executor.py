@@ -89,3 +89,12 @@ def test_callback_for_defers_execution_until_invoked():
     gui.press.assert_not_called()
     callback()
     gui.press.assert_called_once_with("enter")
+
+
+def test_keyboard_input_failure_uses_low_level_fallback():
+    executor, gui, keys, _ = _executor()
+    gui.hotkey.side_effect = OSError("desktop unavailable")
+
+    executor.execute(ActionDefinition(type="hotkey", value="Win+Tab"))
+
+    keys.send.assert_called_once_with("win+tab")

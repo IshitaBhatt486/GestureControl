@@ -26,7 +26,7 @@ def _open_palm_state(timestamp=0.0, handedness=None):
 
 
 def _no_hand_state():
-    return None  # represents an empty-hands frame
+    return None
 
 
 def _engine(custom_matcher=None):

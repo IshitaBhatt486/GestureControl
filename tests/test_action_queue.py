@@ -50,3 +50,26 @@ def test_action_failure_does_not_discard_later_actions(qtbot):
         worker.run()
 
     assert calls == ["success"]
+
+
+def test_shutdown_discards_actions_that_have_not_started(qtbot):
+    actions = ActionQueue()
+    calls = []
+    actions.submit("stale", lambda: calls.append("stale"))
+    actions.close(discard_pending=True)
+
+    worker = ActionWorker(actions)
+    with qtbot.waitSignal(worker.stopped):
+        worker.run()
+
+    assert calls == []
+
+
+def test_profile_change_after_shutdown_keeps_worker_stop_sentinel(qtbot):
+    actions = ActionQueue()
+    actions.close(discard_pending=True)
+    actions.discard_pending()
+
+    worker = ActionWorker(actions)
+    with qtbot.waitSignal(worker.stopped):
+        worker.run()

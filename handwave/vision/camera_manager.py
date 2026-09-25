@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import ctypes
 import logging
-import os
 import threading
 import time
 from dataclasses import dataclass, replace
@@ -13,12 +11,10 @@ from typing import TYPE_CHECKING
 import cv2
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
-from handwave.actions.action_mapper import ActionMapper
 from handwave.actions.action_queue import ActionQueue, ActionWorker
-from handwave.actions.pinch_controller import PinchController
+from handwave.application.recognition_runtime import RecognitionActionRuntime
 from handwave.config.settings_manager import AppSettings
-from handwave.gestures.gesture_filter import GestureFilter
-from handwave.gestures.swipe_recognizer import SwipeRecognizer
+from handwave.diagnostics.pipeline_metrics import DiagnosticsMonitor, PipelineMetrics
 
 if TYPE_CHECKING:
     # Importing mediapipe (transitively, via GestureEngine) costs ~0.7s. Deferring
@@ -37,23 +33,6 @@ class BufferedFrame:
     frame: object
     captured_at: float
     camera_fps: float
-
-
-@dataclass(frozen=True)
-class PipelineMetrics:
-    """One snapshot of capture, recognition, latency, and process health."""
-
-    camera_fps: float = 0.0
-    recognition_fps: float = 0.0
-    latency_ms: float = 0.0
-    cpu_percent: float = 0.0
-    memory_mb: float = 0.0
-    dropped_frames: int = 0
-    active_threads: int = 0
-    hands_detected: int = 0
-    left_hand_pose: str | None = None
-    right_hand_pose: str | None = None
-    two_hand_gesture: str = "Unknown"
 
 
 class LatestFrameBuffer:
@@ -100,48 +79,6 @@ class LatestFrameBuffer:
             self._closed = True
             self._packet = None
             self._condition.notify_all()
-
-
-class DiagnosticsMonitor:
-    """Low-overhead process CPU and working-set sampler."""
-
-    def __init__(self, clock=time.perf_counter, cpu_clock=time.process_time) -> None:
-        self._clock = clock
-        self._cpu_clock = cpu_clock
-        self._last_wall = clock()
-        self._last_cpu = cpu_clock()
-        self.cpu_percent = 0.0
-        self.memory_mb = 0.0
-
-    def update(self) -> tuple[float, float]:
-        now, cpu_now = self._clock(), self._cpu_clock()
-        elapsed = now - self._last_wall
-        if elapsed >= 1.0:
-            cores = max(os.cpu_count() or 1, 1)
-            self.cpu_percent = max(0.0, (cpu_now - self._last_cpu) / elapsed * 100.0 / cores)
-            self.memory_mb = self._working_set_bytes() / (1024 * 1024)
-            self._last_wall, self._last_cpu = now, cpu_now
-        return self.cpu_percent, self.memory_mb
-
-    @staticmethod
-    def _working_set_bytes() -> int:
-        if os.name != "nt":
-            return 0
-        class Counters(ctypes.Structure):
-            _fields_ = [
-                ("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong),
-                ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
-                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t),
-                ("PrivateUsage", ctypes.c_size_t),
-            ]
-        counters = Counters()
-        counters.cb = ctypes.sizeof(counters)
-        process = ctypes.windll.kernel32.GetCurrentProcess()
-        if ctypes.windll.psapi.GetProcessMemoryInfo(process, ctypes.byref(counters), counters.cb):
-            return int(counters.WorkingSetSize)
-        return 0
 
 
 class CameraWorker(QObject):
@@ -217,6 +154,8 @@ class GestureWorker(QObject):
     metrics_ready = pyqtSignal(object)
     confidence_ready = pyqtSignal(float)
     action_outcome = pyqtSignal(object)
+    fingertips_ready = pyqtSignal(object)
+    hands_ready = pyqtSignal(object)
 
     def __init__(
         self,
@@ -224,6 +163,7 @@ class GestureWorker(QObject):
         stop_event: threading.Event,
         settings: AppSettings,
         action_queue: ActionQueue | None = None,
+        custom_gestures: list[object] | None = None,
     ) -> None:
         super().__init__()
         self.buffer = buffer
@@ -231,16 +171,9 @@ class GestureWorker(QObject):
         self.settings = settings
         self.engine: GestureEngine | None = None
         self.action_queue = action_queue
+        self.custom_gestures = custom_gestures or []
         dispatcher = action_queue.submit if action_queue is not None else None
-        self.action_mapper = ActionMapper(
-            cooldown=settings.gesture_cooldown,
-            dispatcher=dispatcher,
-            gesture_bindings=settings.gesture_bindings,
-            enabled_gestures=settings.enabled_gestures,
-        )
-        self.pinch_controller = PinchController(dispatcher=dispatcher)
-        self.gesture_filter = GestureFilter()
-        self.swipe_recognizer = SwipeRecognizer()
+        self.runtime = RecognitionActionRuntime(settings, dispatcher)
         self.diagnostics_monitor = DiagnosticsMonitor()
         self._last_recognition_time: float | None = None
         self._recognition_fps = 0.0
@@ -250,9 +183,11 @@ class GestureWorker(QObject):
         try:
             from handwave.gestures.gesture_engine import GestureEngine
 
+            from handwave.gestures.custom_gesture import CustomGestureMatcher
             self.engine = GestureEngine(
                 sensitivity=self.settings.gesture_sensitivity,
                 overlay_enabled=self.settings.overlay_enabled,
+                custom_matcher=CustomGestureMatcher(self.custom_gestures),
             )
             while not self.stop_event.is_set():
                 started = time.perf_counter()
@@ -271,27 +206,27 @@ class GestureWorker(QObject):
                             else 0.8 * self._recognition_fps + 0.2 * current_fps
                         )
                 self._last_recognition_time = recognized_at
-                filtered = self.gesture_filter.update(gesture.name)
-                pinch = self.pinch_controller.update(gesture.landmarks)
-                swipe = self.swipe_recognizer.update(gesture.landmarks)
+                dispatch = self.runtime.evaluate(gesture)
+                filtered = dispatch.filtered
+                self.fingertips_ready.emit([
+                    (hand.landmarks.get_landmarks()[8].x, hand.landmarks.get_landmarks()[8].y)
+                    for hand in gesture.hands
+                ])
+                self.hands_ready.emit(gesture.hands)
                 cpu, memory = self.diagnostics_monitor.update()
                 if self.settings.overlay_enabled:
                     cv2.putText(annotated, f"Stable: {filtered.stable_gesture}", (16, 128), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
                     cv2.putText(annotated, f"CPU: {cpu:.1f}%  Memory: {memory:.1f} MB", (16, 384), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
-                # Arbitration priority (documented, not hard-coded elsewhere):
-                # two-hand gesture > pinch > swipe > static gesture.
-                if gesture.two_hand.name != "Unknown":
-                    action = gesture.two_hand.name
-                elif pinch.detected:
-                    action = "Unknown"
-                elif swipe.name != "Unknown":
-                    action = swipe.name
-                else:
-                    action = filtered.stable_gesture
-                executed = self.action_mapper.execute(action)
-                self.activity.emit(gesture.name, filtered.stable_gesture, action if executed else "")
-                if self.action_mapper.last_outcome is not None:
-                    self.action_outcome.emit(self.action_mapper.last_outcome)
+                    cv2.putText(annotated, f"Motion: {dispatch.swipe.diagnostic}", (16, 412), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+                self.activity.emit(gesture.name, filtered.stable_gesture, dispatch.action if dispatch.executed else "")
+                outcome = self.runtime.action_mapper.last_outcome
+                routine_gates = {"gesture not re-armed", "cooldown active", "hold duration not met"}
+                if (
+                    dispatch.action != "Unknown"
+                    and outcome is not None
+                    and (outcome.executed or outcome.blocked_reason not in routine_gates)
+                ):
+                    self.action_outcome.emit(outcome)
                 self.confidence_ready.emit(gesture.confidence)
                 self.metrics_ready.emit(PipelineMetrics(
                     camera_fps=packet.camera_fps,
@@ -304,6 +239,8 @@ class GestureWorker(QObject):
                     left_hand_pose=gesture.two_hand.left_pose,
                     right_hand_pose=gesture.two_hand.right_pose,
                     two_hand_gesture=gesture.two_hand.name,
+                    motion_gesture=dispatch.swipe.name,
+                    motion_source=dispatch.swipe.diagnostic,
                 ))
                 self.frame_ready.emit(annotated)
                 # Cap processing near 30 FPS; the latest-frame buffer performs adaptive skipping.
@@ -317,6 +254,15 @@ class GestureWorker(QObject):
                 self.engine = None
             self.stopped.emit()
 
+    @property
+    def action_mapper(self):
+        """Compatibility access to the session action mapper."""
+        return self.runtime.action_mapper
+
+    @action_mapper.setter
+    def action_mapper(self, mapper) -> None:
+        self.runtime.action_mapper = mapper
+
 
 class CameraManager(QObject):
     """Own asynchronous capture, recognition, and action stages."""
@@ -329,6 +275,8 @@ class CameraManager(QObject):
     diagnostics_updated = pyqtSignal(object)
     confidence_updated = pyqtSignal(float)
     action_outcome_updated = pyqtSignal(object)
+    fingertips_updated = pyqtSignal(object)
+    hands_updated = pyqtSignal(object)
 
     def __init__(self, camera_index: int = 0, settings: AppSettings | None = None) -> None:
         super().__init__()
@@ -345,6 +293,7 @@ class CameraManager(QObject):
         self._action_queue: ActionQueue | None = None
         self._threads_finished = 0
         self._had_error = False
+        self.custom_gestures: list[object] = []
 
     @property
     def is_running(self) -> bool:
@@ -367,6 +316,7 @@ class CameraManager(QObject):
             self._stop_event,
             self.settings,
             self._action_queue,
+            self.custom_gestures,
         )
         self._action_worker = ActionWorker(self._action_queue)
         self._capture_worker.moveToThread(self._capture_thread)
@@ -381,6 +331,8 @@ class CameraManager(QObject):
         self._gesture_worker.metrics_ready.connect(self._forward_metrics)
         self._gesture_worker.confidence_ready.connect(self.confidence_updated)
         self._gesture_worker.action_outcome.connect(self.action_outcome_updated)
+        self._gesture_worker.fingertips_ready.connect(self.fingertips_updated)
+        self._gesture_worker.hands_ready.connect(self.hands_updated)
         for worker, thread in (
             (self._capture_worker, self._capture_thread),
             (self._gesture_worker, self._gesture_thread),
@@ -403,11 +355,22 @@ class CameraManager(QObject):
         self._stop_event.set()
         if self._buffer is not None:
             self._buffer.close()
+        if self._action_queue is not None:
+            self._action_queue.close(discard_pending=True)
 
     def update_settings(self, settings: AppSettings) -> None:
         """Use persisted settings the next time recognition starts."""
         self.settings = settings
         self.camera_index = settings.camera_index
+
+    def update_custom_gestures(self, definitions: list[object]) -> None:
+        """Replace local custom definitions; a running engine updates in place."""
+        self.custom_gestures = list(definitions)
+        if self._gesture_worker is not None:
+            self._gesture_worker.custom_gestures = list(definitions)
+            if self._gesture_worker.engine is not None:
+                from handwave.gestures.custom_gesture import CustomGestureMatcher
+                self._gesture_worker.engine.custom_matcher = CustomGestureMatcher(definitions)
 
     def apply_profile_settings(self, effective_settings: AppSettings) -> None:
         """Apply a profile's resolved settings without restarting capture or recognition.
@@ -417,6 +380,8 @@ class CameraManager(QObject):
         loop, and MediaPipe instance are left untouched.
         """
         self.settings = effective_settings
+        if self._action_queue is not None:
+            self._action_queue.discard_pending()
         if self._gesture_worker is not None:
             self._gesture_worker.action_mapper.apply_settings(
                 cooldown=effective_settings.gesture_cooldown,
@@ -440,7 +405,7 @@ class CameraManager(QObject):
     @pyqtSlot()
     def _close_action_queue(self) -> None:
         if self._action_queue is not None:
-            self._action_queue.close()
+            self._action_queue.close(discard_pending=True)
 
     @pyqtSlot()
     def _on_thread_finished(self) -> None:
@@ -457,6 +422,8 @@ class CameraManager(QObject):
         self._stop_event.set()
         if self._buffer is not None:
             self._buffer.close()
+        if self._action_queue is not None:
+            self._action_queue.close(discard_pending=True)
 
     def _cleanup(self) -> None:
         self._capture_worker = None

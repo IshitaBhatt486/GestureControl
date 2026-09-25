@@ -8,6 +8,26 @@ from handwave.services.foreground_app import ForegroundAppInfo
 from handwave.services.profile_switcher import ProfileSwitcher
 
 
+def test_global_template_resolution_change_reapplies_same_profile(tmp_path):
+    manager = ProfileManager(tmp_path / "profiles.json")
+    manager.create_profile("Chrome", app_executable="chrome.exe")
+    settings = [AppSettings(), AppSettings(gesture_cooldown=2.0)]
+    calls = []
+    switcher = ProfileSwitcher(
+        manager,
+        foreground_provider=lambda: ForegroundAppInfo("chrome.exe", None),
+        global_settings_provider=lambda: settings.pop(0),
+        on_change=calls.append,
+    )
+
+    first = switcher.poll()
+    second = switcher.poll()
+
+    assert first.match.profile.profile_id == second.match.profile.profile_id
+    assert second.changed is True
+    assert len(calls) == 2
+
+
 def _switcher(tmp_path, foreground_sequence, enabled=True, on_change=None, times=None):
     manager = ProfileManager(tmp_path / "profiles.json")
     foreground_iter = iter(foreground_sequence)

@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from PyQt6.QtCore import QObject, QSettings, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QSettings, QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import QBoxLayout
 
 from handwave.config.profile_manager import ProfileManager
@@ -36,7 +36,25 @@ class FakeClapDetector(QObject):
         self.stop = MagicMock()
 
 
-def test_start_stop_and_close_to_tray(qtbot):
+def test_camera_workspace_displays_the_on_device_privacy_notice(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.privacy_notice.text() == (
+        "None of your video data leaves your device — it is processed on-device :)"
+    )
+
+
+def test_dashboard_starts_in_dark_mode_and_exposes_the_help_guide(qtbot):
+    window = MainWindow(camera_manager=FakeCamera())
+    qtbot.addWidget(window)
+
+    assert window._theme_mode == "dark"
+    assert window.help_button.text() == "?  Help"
+    assert window.help_button.accessibleName() == "Help and user guide"
+
+
+def test_recognition_button_toggles_start_stop_and_close_to_tray(qtbot):
     camera = FakeCamera()
     window = MainWindow(camera_manager=camera)
     qtbot.addWidget(window)
@@ -45,8 +63,9 @@ def test_start_stop_and_close_to_tray(qtbot):
     camera.start_camera.assert_called_once()
 
     camera.started.emit()
-    assert window.stop_button.isEnabled()
-    window.stop_camera()
+    assert window.start_button.isEnabled()
+    assert window.start_button.text() == "Disable Recognition"
+    qtbot.mouseClick(window.start_button, Qt.MouseButton.LeftButton)
     camera.stop_camera.assert_called_once()
 
     window.show()
@@ -74,6 +93,21 @@ def test_close_keeps_recognition_running_and_tray_can_reopen(qtbot):
     window.open_action.trigger()
     assert window.isVisible()
     window.exit_application()
+
+
+def test_close_can_fully_exit_instead_of_running_in_background(qtbot, tmp_path):
+    camera = FakeCamera()
+    settings = SettingsManager(tmp_path / "settings.json")
+    settings.update(exit_on_close=True)
+    window = MainWindow(camera_manager=camera, settings_manager=settings)
+    qtbot.addWidget(window)
+    window.show()
+
+    window.close()
+
+    assert window._exit_requested
+    camera.stop_camera.assert_called_once()
+    assert not window.tray_icon.isVisible()
 
 
 def test_starting_recognition_activates_matching_application_profile(tmp_path, qtbot):
@@ -172,6 +206,26 @@ def test_open_settings_applies_theme_change_from_dialog(qtbot, tmp_path):
     assert window._theme_mode == "light"
 
 
+def test_saving_cursor_overlay_setting_hides_marker_immediately(qtbot, tmp_path):
+    from PyQt6.QtWidgets import QDialog
+    from handwave.ui.settings_dialog import SettingsDialog
+
+    settings = SettingsManager(tmp_path / "settings.json")
+    window = MainWindow(camera_manager=FakeCamera(), settings_manager=settings)
+    qtbot.addWidget(window)
+    window.cursor_assist_overlay.update_position(100, 100)
+    qtbot.wait(20)
+    assert window.cursor_assist_overlay.isVisible()
+
+    with patch.object(SettingsDialog, "exec", return_value=QDialog.DialogCode.Accepted):
+        with patch.object(SettingsDialog, "values", return_value={"cursor_assist_overlay_enabled": False}):
+            window.open_settings()
+
+    assert settings.settings.cursor_assist_overlay_enabled is False
+    assert not window.cursor_assist_overlay.isVisible()
+    window.exit_application()
+
+
 def test_tray_enable_disable_and_exit(qtbot):
     camera = FakeCamera()
     window = MainWindow(camera_manager=camera)
@@ -215,6 +269,52 @@ def test_double_clap_toggles_recognition_and_feedback(qtbot):
     clap.stop.assert_called_once()
 
 
+def test_calibrated_fingertip_updates_cursor_assist_without_moving_os_cursor(qtbot, tmp_path, monkeypatch):
+    from handwave.services.monitor_layout import MonitorGeometry, MonitorLayout
+
+    settings = SettingsManager(tmp_path / "settings.json")
+    settings.update(cursor_reach_calibration={
+        "center_x": .5, "center_y": .5, "left": .2,
+        "right": .8, "top": .2, "bottom": .8,
+    })
+    layout = MonitorLayout((MonitorGeometry("PRIMARY", 100, 200, 1000, 800, True),))
+    monkeypatch.setattr("handwave.ui.main_window.MonitorLayout.current", lambda: layout)
+    window = MainWindow(camera_manager=FakeCamera(), settings_manager=settings)
+    qtbot.addWidget(window)
+
+    window._feed_cursor_assist([(.5, .5)])
+    qtbot.wait(20)
+
+    assert window.cursor_assist_overlay.isVisible()
+    assert window.cursor_assist_overlay.pos().x() == 589  # 100 + 500 - 11
+    assert window.cursor_assist_overlay.pos().y() == 589  # 200 + 400 - 11
+    window.exit_application()
+
+
+def test_cursor_calibration_modal_opens_and_closes_without_dashboard_crash(qtbot, tmp_path):
+    window = MainWindow(camera_manager=FakeCamera(), settings_manager=SettingsManager(tmp_path / "settings.json"))
+    qtbot.addWidget(window)
+    QTimer.singleShot(0, lambda: window.cursor_calibration_dialog.reject())
+
+    window.open_cursor_calibration()
+
+    assert window.cursor_calibration_dialog.result() == 0
+    window.exit_application()
+
+
+def test_gesture_activity_sets_subtle_cursor_feedback_state(qtbot):
+    from handwave.ui.cursor_assist_overlay import CursorAssistState
+
+    window = MainWindow(camera_manager=FakeCamera())
+    qtbot.addWidget(window)
+    window.update_activity("Fist", "Fist", "Left Click")
+
+    assert window.cursor_assist_overlay.state is CursorAssistState.CLICK_READY
+    window._restore_cursor_tracking()
+    assert window.cursor_assist_overlay.state is CursorAssistState.TRACKING
+    window.exit_application()
+
+
 def test_gesture_history_and_action_log_update_together(qtbot):
     camera = FakeCamera()
     window = MainWindow(camera_manager=camera)
@@ -224,7 +324,7 @@ def test_gesture_history_and_action_log_update_together(qtbot):
     camera.recognition_updated.emit("Peace Sign", "Peace Sign", "Peace Sign")
     camera.recognition_updated.emit("Peace Sign", "Peace Sign", "")
 
-    assert "Raw  Peace Sign" in window.live_gesture.text()
+    assert "Peace Sign" in window.live_gesture.text()
     assert window.gesture_history.count() == 1
     assert "Peace Sign" in window.gesture_history.item(0).text()
     assert window.action_log.count() == 1
@@ -265,6 +365,8 @@ def test_diagnostics_panel_displays_pipeline_metrics(qtbot):
     assert "7" in text
     assert window.diagnostics_page._values["threads"].text() == "3"
     assert window.diagnostics_page._values["latency"].text() == "41.7 ms"
+    assert window.diagnostics_page._values["overlay_cpu"].text().endswith("%")
+    assert window.diagnostics_page._values["overlay_memory"].text().endswith("KB")
     window.exit_application()
 
 
@@ -289,7 +391,7 @@ def test_diagnostics_page_tracks_current_gesture_and_pipeline_status(qtbot):
     camera.recognition_updated.emit("Peace Sign", "Peace Sign", "")
 
     assert window.diagnostics_page.live_status.text() == "●  LIVE"
-    assert window.diagnostics_page.current_gesture.text() == "Peace Sign"
+    assert "Peace Sign" in window.diagnostics_page.current_gesture.text()
     assert "Raw  Peace Sign" in window.diagnostics_page.gesture_detail.text()
 
     camera.stopped.emit()

@@ -83,7 +83,11 @@ class ProfileSwitcher:
 
         previous_id = self._profile_id(self.last_event.match if self.last_event else None)
         current_id = self._profile_id(match)
-        changed = current_id != previous_id or self.last_event is None
+        changed = (
+            self.last_event is None
+            or current_id != previous_id
+            or effective_settings != self.last_event.effective_settings
+        )
         now = self._clock()
         if changed:
             self.last_switch_time = now

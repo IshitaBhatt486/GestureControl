@@ -1,5 +1,6 @@
 from PyQt6.QtWidgets import QTabWidget
 
+from handwave.actions.action_definition import ActionDefinition
 from handwave.config.settings_manager import AppSettings
 from handwave.ui.settings_dialog import SettingsDialog
 
@@ -34,13 +35,32 @@ def test_dialog_toggles_auto_switch_profiles(qtbot):
     assert dialog.values()["auto_switch_profiles"] is False
 
 
+def test_dialog_can_exit_the_background_process_when_window_closes(qtbot):
+    dialog = SettingsDialog(AppSettings())
+    qtbot.addWidget(dialog)
+
+    dialog.exit_on_close.setChecked(True)
+
+    assert dialog.values()["exit_on_close"] is True
+
+
 def test_dialog_is_organized_into_sections(qtbot):
     dialog = SettingsDialog(AppSettings())
     qtbot.addWidget(dialog)
 
     tabs = dialog.findChild(QTabWidget)
     labels = [tabs.tabText(index) for index in range(tabs.count())]
-    assert labels == ["General", "Camera", "Gestures && Actions", "Appearance"]
+    assert labels == ["General", "Camera", "Microphone", "Cursor Control", "Gestures && Actions", "Appearance"]
+
+
+def test_dialog_persists_show_cursor_overlay_toggle(qtbot):
+    dialog = SettingsDialog(AppSettings())
+    qtbot.addWidget(dialog)
+
+    assert dialog.show_cursor_overlay.isChecked()
+    dialog.show_cursor_overlay.setChecked(False)
+
+    assert dialog.values()["cursor_assist_overlay_enabled"] is False
 
 
 def test_dialog_edits_camera_index_and_theme(qtbot):
@@ -53,6 +73,22 @@ def test_dialog_edits_camera_index_and_theme(qtbot):
     values = dialog.values()
     assert values["camera_index"] == 2
     assert values["theme"] == "light"
+
+
+def test_dialog_edits_fingerprint_indicator_options(qtbot):
+    dialog = SettingsDialog(AppSettings())
+    qtbot.addWidget(dialog)
+
+    dialog.show_fingerprint_indicator.setChecked(False)
+    dialog.fingerprint_indicator_size.setValue(24)
+    dialog.fingerprint_indicator_opacity.setValue(0.7)
+    dialog.fingerprint_indicator_fade_duration_ms.setValue(400)
+
+    values = dialog.values()
+    assert values["show_fingerprint_indicator"] is False
+    assert values["fingerprint_indicator_size"] == 24
+    assert values["fingerprint_indicator_opacity"] == 0.7
+    assert values["fingerprint_indicator_fade_duration_ms"] == 400
 
 
 def test_dialog_edits_global_cooldown(qtbot):
@@ -78,7 +114,29 @@ def test_dialog_supports_keyboard_hotkey_action(qtbot):
     assert binding["value"] == "ctrl+pagedown"
 
 
-def test_dialog_forces_confirmation_for_command_actions(qtbot):
+def test_dialog_lists_all_configurable_navigation_gestures(qtbot):
+    dialog = SettingsDialog(AppSettings())
+    qtbot.addWidget(dialog)
+
+    assert {
+        "Finger Swipe Up",
+        "Hand Swipe Up",
+        "Finger Swipe Down",
+        "Hand Swipe Down",
+        "Pointing Up",
+        "Pointing Down",
+        "Pointing Left",
+        "Pointing Right",
+        "Swipe Left",
+        "Swipe Right",
+    } <= set(dialog._gesture_rows)
+    row = dialog._gesture_rows["Open Palm"].enabled_checkbox
+    assert "Open Palm" in row.text()
+    assert row.accessibleName() == "Open Palm"
+    assert not row.icon().isNull()
+
+
+def test_dialog_requires_a_safe_hold_for_command_actions_without_confirmation_control(qtbot):
     dialog = SettingsDialog(AppSettings())
     qtbot.addWidget(dialog)
 
@@ -86,5 +144,6 @@ def test_dialog_forces_confirmation_for_command_actions(qtbot):
     row.enabled_checkbox.setChecked(True)
     row.type_combo.setCurrentIndex(row.type_combo.findData("command"))
 
-    assert row.confirmation_checkbox.isChecked()
-    assert not row.confirmation_checkbox.isEnabled()
+    assert not hasattr(row, "confirmation_checkbox")
+    assert row.action_dict()["requires_confirmation"] is False
+    assert row.action_dict()["hold_duration"] >= ActionDefinition.CONFIRMATION_HOLD

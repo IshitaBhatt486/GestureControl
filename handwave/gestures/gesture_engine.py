@@ -240,8 +240,20 @@ class GestureEngine:
             if name == "Thumbs Down" and not self._thumb_points_down(landmarks):
                 continue
             matches = [score if pattern[finger] == "extended" else 1.0 - score for finger, score in scores.items()]
+            if name == "Pointing":
+                name = f"Pointing {self._pointing_direction(landmarks)}"
             return GestureDetection(name, sum(matches) / len(matches))
         return GestureDetection()
+
+    @staticmethod
+    def _pointing_direction(landmarks: HandLandmarkData) -> str:
+        """Classify the index ray against its MCP joint in camera coordinates."""
+        points = landmarks.get_landmarks()
+        base, tip = points[5], points[8]
+        dx, dy = tip.x - base.x, tip.y - base.y
+        if abs(dx) > abs(dy) * 1.2:
+            return "Right" if dx > 0 else "Left"
+        return "Down" if dy > 0 else "Up"
 
     @staticmethod
     def _thumb_points_up(landmarks: HandLandmarkData) -> bool:

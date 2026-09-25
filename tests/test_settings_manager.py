@@ -39,7 +39,7 @@ def test_file_contains_only_supported_settings(tmp_path):
     manager.update(gesture_cooldown=2.0)
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved == {
-        "schema_version": 1,
+        "schema_version": 3,
         "camera_index": 0,
         "gesture_sensitivity": 0.6,
         "gesture_cooldown": 2.0,
@@ -52,6 +52,26 @@ def test_file_contains_only_supported_settings(tmp_path):
         "enabled_gestures": DEFAULT_ENABLED_GESTURES,
         "theme": "dark",
         "auto_switch_profiles": True,
+        "exit_on_close": False,
+        "show_fingerprint_indicator": True,
+        "fingerprint_indicator_size": 18,
+        "fingerprint_indicator_opacity": 1.0,
+        "fingerprint_indicator_fade_duration_ms": 250,
+        "microphone_device": None,
+        "clap_min_peak": 0.02,
+        "clap_rms_threshold": 0.0,
+        "clap_noise_multiplier": 2.5,
+        "double_clap_min_interval": 0.12,
+        "double_clap_max_interval": 1.0,
+        "cursor_reach_calibration": None,
+        "cursor_dead_zone_percent": 10,
+        "cursor_smoothing": "medium",
+        "cursor_target_mode": "primary",
+        "cursor_target_monitor_id": None,
+        "cursor_monitor_layout_fingerprint": "",
+        "cursor_assist_overlay_enabled": True,
+        "cursor_assist_overlay_size": 22,
+        "cursor_assist_overlay_opacity": 0.72,
     }
 
 
@@ -87,6 +107,52 @@ def test_legacy_settings_file_without_schema_version_still_loads(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text(json.dumps({"camera_index": 3, "gesture_sensitivity": 0.5}), encoding="utf-8")
     assert SettingsManager(path).settings.camera_index == 3
+
+
+def test_default_settings_migrate_legacy_source_file_to_device_storage(tmp_path, monkeypatch):
+    device_path = tmp_path / "device" / "HandWave" / "config" / "settings.json"
+    legacy_path = tmp_path / "checkout" / "settings.json"
+    legacy_path.parent.mkdir()
+    legacy_path.write_text(json.dumps({"camera_index": 4}), encoding="utf-8")
+    monkeypatch.setattr(SettingsManager, "DEFAULT_PATH", device_path)
+    monkeypatch.setattr(SettingsManager, "LEGACY_SOURCE_PATH", legacy_path)
+
+    manager = SettingsManager()
+
+    assert manager.settings.camera_index == 4
+    assert manager.path == device_path
+    assert json.loads(device_path.read_text(encoding="utf-8"))["camera_index"] == 4
+
+
+def test_version_one_cursor_settings_migrate_to_primary_monitor_target(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "cursor_reach_calibration": {
+            "center_x": .5, "center_y": .5, "left": .2,
+            "right": .8, "top": .2, "bottom": .8,
+        },
+    }), encoding="utf-8")
+
+    settings = SettingsManager(path).settings
+
+    assert settings.cursor_target_mode == "primary"
+    assert settings.cursor_target_monitor_id is None
+    assert settings.cursor_monitor_layout_fingerprint == ""
+    assert settings.cursor_assist_overlay_enabled is True
+    assert settings.cursor_assist_overlay_size == 22
+
+
+def test_version_two_settings_migrate_cursor_overlay_defaults(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"schema_version": 2, "cursor_target_mode": "all"}), encoding="utf-8")
+
+    settings = SettingsManager(path).settings
+
+    assert settings.cursor_target_mode == "all"
+    assert settings.cursor_assist_overlay_enabled is True
+    assert settings.cursor_assist_overlay_size == 22
+    assert settings.cursor_assist_overlay_opacity == 0.72
 
 
 def test_partial_legacy_gesture_configuration_is_migrated(tmp_path):

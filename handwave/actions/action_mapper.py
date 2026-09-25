@@ -57,10 +57,7 @@ class ActionMapper:
             executor_options["program_launcher"] = program_launcher
         self._executor = executor or ActionExecutor(**executor_options)
         source_bindings = DEFAULT_GESTURE_BINDINGS if gesture_bindings is None else gesture_bindings
-        self._gesture_bindings = {
-            gesture: ActionDefinition.from_data(action)
-            for gesture, action in source_bindings.items()
-        }
+        self._gesture_bindings = self._normalize_bindings(source_bindings)
         self._enabled_gestures = (
             DEFAULT_ENABLED_GESTURES.copy()
             if enabled_gestures is None
@@ -89,10 +86,7 @@ class ActionMapper:
                 raise ValueError("Cooldown cannot be negative")
             self.cooldown = cooldown
         if gesture_bindings is not None:
-            self._gesture_bindings = {
-                gesture: ActionDefinition.from_data(action)
-                for gesture, action in gesture_bindings.items()
-            }
+            self._gesture_bindings = self._normalize_bindings(gesture_bindings)
         if enabled_gestures is not None:
             self._enabled_gestures = dict(enabled_gestures)
 
@@ -119,14 +113,10 @@ class ActionMapper:
             return False
 
         if not self._enabled_gestures.get(gesture or "", False):
-            self._active_gesture = None
-            self._active_since = None
-            self._active_executed = False
+            self._reset_active_gesture()
             return blocked("gesture disabled")
         if registered is None and action_definition.type == "none":
-            self._active_gesture = None
-            self._active_since = None
-            self._active_executed = False
+            self._reset_active_gesture()
             return blocked("no action bound")
         if gesture == self._active_gesture and self._active_executed:
             return blocked("gesture not re-armed")
@@ -157,3 +147,17 @@ class ActionMapper:
         except Exception as exc:
             logger.exception("Action failed for gesture %s", gesture)
             return blocked(f"action failed: {exc}")
+
+    @staticmethod
+    def _normalize_bindings(bindings: dict[str, object]) -> dict[str, ActionDefinition]:
+        """Validate configuration input at the action-system boundary."""
+        return {
+            gesture: ActionDefinition.from_data(action)
+            for gesture, action in bindings.items()
+        }
+
+    def _reset_active_gesture(self) -> None:
+        """Clear re-arm state when no eligible gesture remains."""
+        self._active_gesture = None
+        self._active_since = None
+        self._active_executed = False

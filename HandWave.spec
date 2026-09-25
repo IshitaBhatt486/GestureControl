@@ -3,6 +3,13 @@
 from PyInstaller.utils.hooks import collect_all
 
 mediapipe_data, mediapipe_binaries, mediapipe_hidden = collect_all("mediapipe")
+# HandWave uses MediaPipe's hand-landmarker APIs, not its optional GenAI
+# converter or upstream test suite. Their discovery pulls in optional torch
+# imports and unnecessarily makes release analysis noisy and slow.
+mediapipe_hidden = [
+    module for module in mediapipe_hidden
+    if ".genai" not in module and ".test" not in module
+]
 
 a = Analysis(
     ["handwave/main.py"],

@@ -38,13 +38,35 @@ class ActionQueue:
                 return
             self._queue.put_nowait(ActionCommand(name, callback))
 
-    def close(self) -> None:
-        """Reject new work and place a sentinel after every accepted command."""
+    def close(self, discard_pending: bool = False) -> None:
+        """Reject new work and stop the worker.
+
+        Normal completion drains accepted work in FIFO order. Recognition
+        shutdown instead discards work that has not started, preventing a
+        stale gesture from acting after camera control was disabled. An action
+        already executing cannot be safely interrupted by another thread.
+        """
         with self._lock:
             if self._closed:
                 return
             self._closed = True
+            if discard_pending:
+                self._discard_pending_locked()
             self._queue.put_nowait(self._STOP)
+
+    def discard_pending(self) -> None:
+        """Drop commands that have not yet been claimed by the action worker."""
+        with self._lock:
+            if self._closed:
+                return
+            self._discard_pending_locked()
+
+    def _discard_pending_locked(self) -> None:
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                return
 
     def next_command(self) -> ActionCommand | None:
         item = self._queue.get()

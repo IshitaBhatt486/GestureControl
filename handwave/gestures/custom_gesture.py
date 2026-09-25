@@ -209,6 +209,7 @@ class CustomGestureDefinition:
     tolerance: float = MIN_TOLERANCE
     enabled: bool = True
     sample_count: int = 0
+    samples: tuple[dict[str, Any], ...] = ()
     created_at: float = field(default_factory=time.time)
 
     def __post_init__(self) -> None:
@@ -226,6 +227,8 @@ class CustomGestureDefinition:
             raise ValueError("enabled must be a boolean")
         if self.sample_count < 0:
             raise ValueError("sample_count cannot be negative")
+        if not isinstance(self.samples, tuple) or any(not isinstance(sample, dict) for sample in self.samples):
+            raise ValueError("samples must be landmark-feature objects")
         object.__setattr__(self, "representative_scores", tuple(float(v) for v in self.representative_scores))
         object.__setattr__(self, "tolerance", float(self.tolerance))
 
@@ -237,6 +240,7 @@ class CustomGestureDefinition:
             "tolerance": self.tolerance,
             "enabled": self.enabled,
             "sample_count": self.sample_count,
+            "samples": list(self.samples),
             "created_at": self.created_at,
         }
 
@@ -253,6 +257,8 @@ class CustomGestureDefinition:
         kwargs = dict(data)
         if "representative_scores" in kwargs:
             kwargs["representative_scores"] = tuple(kwargs["representative_scores"])
+        if "samples" in kwargs:
+            kwargs["samples"] = tuple(kwargs["samples"])
         return cls(**kwargs)
 
 

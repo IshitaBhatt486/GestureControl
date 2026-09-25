@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import cv2
 from PyQt6.QtCore import QPropertyAnimation, QSettings, QTime, QTimer, Qt, pyqtSlot
@@ -29,6 +30,8 @@ from PyQt6.QtWidgets import (
 )
 
 from handwave.config.profile_manager import ProfileManager
+from handwave.config.template_manager import TemplateManager
+from handwave.gestures.custom_gesture_store import CustomGestureStore
 from handwave.config.settings_manager import SettingsManager
 from handwave.services.action_history import ActionHistory
 from handwave.services.activation_service import ActivationService
@@ -37,7 +40,17 @@ from handwave.services.foreground_app import get_foreground_app
 from handwave.services.profile_switcher import ProfileSwitchEvent, ProfileSwitcher
 from handwave.ui.onboarding import OnboardingDialog
 from handwave.ui.diagnostics_page import DiagnosticsPage
+from handwave.ui.fingerprint_indicator import FingerprintIndicator
 from handwave.ui.settings_dialog import SettingsDialog
+from handwave.ui.templates_dialog import TemplatesDialog
+from handwave.ui.custom_gestures_dialog import CustomGesturesDialog
+from handwave.ui.microphone_dialog import MicrophoneDialog
+from handwave.ui.cursor_calibration_dialog import CursorCalibrationDialog
+from handwave.ui.cursor_assist_overlay import CursorAssistOverlay, CursorAssistState
+from handwave.actions.cursor_reach_mapper import CursorReach, SmoothedCursorReachMapper
+from handwave.services.monitor_layout import MonitorLayout
+from handwave.ui.help_dialog import HelpDialog
+from handwave.ui.gesture_icons import gesture_icon, gesture_text
 from handwave.vision.camera_manager import CameraManager
 
 logger = logging.getLogger(__name__)
@@ -57,20 +70,32 @@ class MainWindow(QMainWindow):
         settings_manager: SettingsManager | None = None,
         onboarding_settings: QSettings | None = None,
         profile_manager: ProfileManager | None = None,
+        template_manager: TemplateManager | None = None,
+        custom_gesture_store: CustomGestureStore | None = None,
         foreground_app_provider=None,
     ) -> None:
         super().__init__()
         self.settings_manager = settings_manager or SettingsManager()
         self.camera = camera_manager or CameraManager(settings=self.settings_manager.settings)
         self.activation = ActivationService()
-        self.clap_detector = clap_detector or ClapDetector()
+        self.clap_detector = clap_detector or ClapDetector(
+            device=self.settings_manager.settings.microphone_device,
+            min_peak=self.settings_manager.settings.clap_min_peak,
+            rms_threshold=self.settings_manager.settings.clap_rms_threshold,
+            noise_multiplier=self.settings_manager.settings.clap_noise_multiplier,
+            min_clap_separation=self.settings_manager.settings.double_clap_min_interval,
+            max_clap_separation=self.settings_manager.settings.double_clap_max_interval,
+        )
         self.onboarding_settings = onboarding_settings or QSettings("HandWave", "HandWave")
         self.onboarding_dialog: OnboardingDialog | None = None
         self.profile_manager = profile_manager or ProfileManager()
+        self.template_manager = template_manager or TemplateManager()
+        self.custom_gesture_store = custom_gesture_store or CustomGestureStore()
+        self.camera.update_custom_gestures(self.custom_gesture_store.list_gestures()) if hasattr(self.camera, "update_custom_gestures") else None
         self.profile_switcher = ProfileSwitcher(
             self.profile_manager,
             foreground_provider=foreground_app_provider or get_foreground_app,
-            global_settings_provider=lambda: self.settings_manager.settings,
+            global_settings_provider=lambda: self.template_manager.get_active_template().resolve(self.settings_manager.settings),
             on_change=self._on_profile_switch,
             enabled=self.settings_manager.settings.auto_switch_profiles,
         )
@@ -83,12 +108,29 @@ class MainWindow(QMainWindow):
         self._exit_requested = False
         self._camera_error_pending = False
         self._last_stable_gesture = "Unknown"
-        self._theme_mode = self.settings_manager.settings.theme
+        self._cursor_mapper: SmoothedCursorReachMapper | None = None
+        self._cursor_mapper_signature: tuple[object, ...] | None = None
+        self.cursor_assist_overlay = CursorAssistOverlay(
+            self.settings_manager.settings.cursor_assist_overlay_size,
+            self.settings_manager.settings.cursor_assist_overlay_opacity,
+        )
+        self._cursor_state_timer = QTimer(self)
+        self._cursor_state_timer.setSingleShot(True)
+        self._cursor_state_timer.timeout.connect(self._restore_cursor_tracking)
+        # A predictable dark dashboard is the startup baseline. Theme toggles
+        # still apply immediately, but no previous light-mode session changes
+        # the visual default of the next launch.
+        self._theme_mode = "dark"
         self._active_icon = self._make_status_icon("#34d399")
         self._paused_icon = self._make_status_icon("#64748b")
         self._build_ui()
         self._build_tray()
         self._connect_signals()
+        self._microphone_diagnostics_timer = QTimer(self)
+        self._microphone_diagnostics_timer.setInterval(500)
+        self._microphone_diagnostics_timer.timeout.connect(self._update_microphone_diagnostics)
+        self._microphone_diagnostics_timer.start()
+        self._update_microphone_diagnostics()
 
     @staticmethod
     def _make_status_icon(color: str) -> QIcon:
@@ -133,12 +175,17 @@ class MainWindow(QMainWindow):
         self.theme_button.setObjectName("themeButton")
         self.theme_button.setToolTip("Switch between dark and light appearance")
         self._sync_theme_button()
+        self.help_button = QPushButton("?  Help")
+        self.help_button.setObjectName("helpButton")
+        self.help_button.setToolTip("Open the HandWave user guide")
+        self.help_button.setAccessibleName("Help and user guide")
 
         header = QHBoxLayout()
         header.addLayout(brand_layout)
         header.addStretch()
         header.addWidget(status_badge)
         header.addWidget(self.theme_button)
+        header.addWidget(self.help_button)
 
         system_status = QFrame()
         system_status.setObjectName("statusStrip")
@@ -161,24 +208,41 @@ class MainWindow(QMainWindow):
         self.preview.setMinimumSize(360, 280)
         self.preview.setAccessibleName("Live camera preview")
         self.preview.setAccessibleDescription("Shows the camera image and detected hand landmarks while recognition is enabled.")
+        self.fingerprint_indicator = FingerprintIndicator(
+            self.preview,
+            enabled=self.settings_manager.settings.show_fingerprint_indicator,
+            size=self.settings_manager.settings.fingerprint_indicator_size,
+            opacity=self.settings_manager.settings.fingerprint_indicator_opacity,
+            fade_duration_ms=self.settings_manager.settings.fingerprint_indicator_fade_duration_ms,
+        )
 
         camera_title = QLabel("Camera workspace")
         camera_title.setObjectName("cardTitle")
         camera_subtitle = QLabel("Live landmark tracking and gesture recognition")
         camera_subtitle.setObjectName("cardSubtitle")
+        self.privacy_notice = QLabel(
+            "None of your video data leaves your device — it is processed on-device :)"
+        )
+        self.privacy_notice.setObjectName("privacyNotice")
+        self.privacy_notice.setWordWrap(True)
+        self.privacy_notice.setAccessibleName("Camera privacy notice")
 
         self.start_button = QPushButton("Enable Recognition")
         self.start_button.setObjectName("primaryButton")
-        self.start_button.setAccessibleDescription("Start camera capture and gesture recognition")
-        self.stop_button = QPushButton("Pause")
-        self.stop_button.setEnabled(False)
-        self.stop_button.setAccessibleDescription("Pause camera capture and gesture recognition")
+        self.start_button.setAccessibleDescription("Enable or disable camera capture and gesture recognition")
         self.settings_button = QPushButton("Settings")
+        self.templates_button = QPushButton("Templates")
+        self.custom_gestures_button = QPushButton("Custom Gestures")
+        self.microphone_button = QPushButton("Microphone Test")
+        self.cursor_calibration_button = QPushButton("Cursor Calibration")
         self.settings_button.setAccessibleDescription("Open gesture bindings and sensitivity settings")
         controls = QHBoxLayout()
         controls.addWidget(self.start_button)
-        controls.addWidget(self.stop_button)
         controls.addWidget(self.settings_button)
+        controls.addWidget(self.templates_button)
+        controls.addWidget(self.custom_gestures_button)
+        controls.addWidget(self.microphone_button)
+        controls.addWidget(self.cursor_calibration_button)
         controls.addStretch()
 
         camera_card = QFrame()
@@ -188,6 +252,7 @@ class MainWindow(QMainWindow):
         camera_layout.setSpacing(12)
         camera_layout.addWidget(camera_title)
         camera_layout.addWidget(camera_subtitle)
+        camera_layout.addWidget(self.privacy_notice)
         camera_layout.addWidget(self.preview, 1)
         camera_layout.addLayout(controls)
 
@@ -279,14 +344,14 @@ class MainWindow(QMainWindow):
     def _theme(mode: str = "dark") -> str:
         palette = {
             "dark": ("#0b0f17", "#111827", "#151e2e", "#e8edf5", "#8d9bb0", "#263247", "#080c13"),
-            "light": ("#f3f5f8", "#ffffff", "#f7f9fc", "#172033", "#68758a", "#dbe1ea", "#e9edf3"),
+            "light": ("#eef2f7", "#ffffff", "#f8fafc", "#172033", "#526174", "#cbd5e1", "#e2e8f0"),
         }[mode]
         bg, card, inset, text, muted, border, preview = palette
         return f"""
             QMainWindow, QWidget {{ background: {bg}; color: {text}; font-family: 'Segoe UI'; font-size: 12px; }}
             QScrollArea#workspaceScroll {{ background: {bg}; border: none; }}
             QLabel#brand {{ font-size: 28px; font-weight: 700; color: {text}; }}
-            QLabel#tagline, QLabel#cardSubtitle, QLabel#confidenceLabel {{ color: {muted}; }}
+            QLabel#tagline, QLabel#cardSubtitle, QLabel#confidenceLabel, QLabel#privacyNotice {{ color: {muted}; }}
             QLabel#cardTitle {{ font-size: 16px; font-weight: 650; color: {text}; }}
             QFrame#statusBadge, QFrame#statusStrip {{ background: {card}; border: 1px solid {border}; border-radius: 10px; }}
             QLabel#statusText {{ font-weight: 600; color: {text}; }}
@@ -301,12 +366,19 @@ class MainWindow(QMainWindow):
             QProgressBar#confidenceBar::chunk {{ background: #10b981; border-radius: 3px; }}
             QListWidget#activityList {{ background: {inset}; border: 1px solid {border}; border-radius: 9px; padding: 5px; outline: none; color: {text}; }}
             QListWidget#activityList::item {{ padding: 7px 6px; border-bottom: 1px solid {border}; }}
-            QPushButton, QComboBox, QDoubleSpinBox {{ background: {inset}; color: {text}; border: 1px solid {border}; border-radius: 8px; padding: 8px 14px; font-weight: 600; }}
-            QPushButton:hover, QComboBox:hover {{ border-color: #10b981; }}
+            QPushButton, QComboBox, QDoubleSpinBox {{ background: {card}; color: {text}; border: 1px solid {border}; border-radius: 8px; padding: 8px 14px; font-weight: 600; }}
+            QPushButton:hover, QComboBox:hover {{ background: {inset}; border-color: #059669; }}
+            QPushButton:pressed {{ background: #d1fae5; }}
             QPushButton:disabled {{ color: {muted}; background: {card}; }}
             QPushButton#primaryButton {{ background: #10b981; color: #06130f; border-color: #10b981; }}
             QPushButton#primaryButton:hover {{ background: #22c995; }}
             QPushButton#themeButton {{ min-width: 82px; }}
+            QPushButton#helpButton {{ min-width: 76px; }}
+            QDialog#helpDialog {{ background: {bg}; color: {text}; }}
+            QLabel#helpTitle {{ color: {text}; font-size: 24px; font-weight: 700; }}
+            QLabel#helpSubtitle, QLabel#helpCardBody {{ color: {muted}; font-size: 13px; }}
+            QFrame#helpCard {{ background: {card}; border: 1px solid {border}; border-radius: 12px; }}
+            QLabel#helpCardTitle {{ color: {text}; font-size: 15px; font-weight: 700; }}
             QTabWidget#mainPages::pane {{ border: none; background: {bg}; }}
             QTabBar::tab {{ background: {card}; color: {muted}; border-bottom: 2px solid transparent;
                             padding: 10px 22px; min-width: 90px; font-weight: 600; }}
@@ -356,11 +428,16 @@ class MainWindow(QMainWindow):
         self.tray_icon.show()
 
     def _connect_signals(self) -> None:
-        self.start_button.clicked.connect(self.start_camera)
-        self.stop_button.clicked.connect(self.stop_camera)
+        self.start_button.clicked.connect(self.toggle_recognition)
         self.settings_button.clicked.connect(self.open_settings)
+        self.templates_button.clicked.connect(self.open_templates)
+        self.custom_gestures_button.clicked.connect(self.open_custom_gestures)
+        self.microphone_button.clicked.connect(self.open_microphone_test)
+        self.cursor_calibration_button.clicked.connect(self.open_cursor_calibration)
         self.theme_button.clicked.connect(self.toggle_theme)
+        self.help_button.clicked.connect(self.open_help)
         self.camera.frame_ready.connect(self.update_frame)
+        self.camera.frame_ready.connect(self._feed_cursor_calibration_frame)
         self.camera.started.connect(self._camera_started)
         self.camera.stopped.connect(self._camera_stopped)
         self.camera.error.connect(self._camera_error)
@@ -372,6 +449,11 @@ class MainWindow(QMainWindow):
             self.camera.confidence_updated.connect(self.update_confidence)
         if hasattr(self.camera, "action_outcome_updated"):
             self.camera.action_outcome_updated.connect(self._record_action_outcome)
+        if hasattr(self.camera, "fingertips_updated"):
+            self.camera.fingertips_updated.connect(self.fingerprint_indicator.update_fingertips)
+            self.camera.fingertips_updated.connect(self._feed_cursor_calibration)
+        if hasattr(self.camera, "hands_updated"):
+            self.camera.hands_updated.connect(self._feed_custom_gesture_hands)
         self.open_action.triggered.connect(self.open_from_tray)
         self.enable_action.triggered.connect(self.start_camera)
         self.disable_action.triggered.connect(self.stop_camera)
@@ -381,7 +463,9 @@ class MainWindow(QMainWindow):
         self.startup_action.toggled.connect(self._set_startup_enabled)
         self.exit_action.triggered.connect(self.exit_application)
         self.tray_icon.activated.connect(self._tray_activated)
-        self.clap_detector.double_clap.connect(self.toggle_recognition)
+        # ClapDetector queues callback-originated signals to its GUI thread;
+        # keeping this default connection also supports test/in-process emitters.
+        self.clap_detector.double_clap.connect(self._handle_clap_toggle)
         self.clap_detector.error.connect(self._clap_error)
         if hasattr(self.clap_detector, "started"):
             self.clap_detector.started.connect(self._microphone_started)
@@ -403,12 +487,17 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str, str, str)
     def update_activity(self, raw: str, stable: str, action: str) -> None:
-        self.live_gesture.setText(f"Raw  {raw}\nStable  {stable}")
+        self.live_gesture.setText(f"Raw  {gesture_text(raw)}\nStable  {gesture_text(stable)}")
+        self.live_gesture.setAccessibleName(f"Raw {raw}; Stable {stable}")
         self.diagnostics_page.update_gesture(raw, stable)
         timestamp = QTime.currentTime().toString("HH:mm:ss")
         if stable != "Unknown" and stable != self._last_stable_gesture:
-            self._prepend_bounded(self.gesture_history, f"{timestamp}   {stable}")
+            self._prepend_bounded(self.gesture_history, f"{timestamp}   {gesture_text(stable)}", stable)
         self._last_stable_gesture = stable
+        if stable != "Unknown":
+            state = CursorAssistState.CLICK_READY if "click" in action.lower() else CursorAssistState.GESTURE_DETECTED
+            self.cursor_assist_overlay.set_state(state)
+            self._cursor_state_timer.start(450)
         if action:
             self._prepend_bounded(self.action_log, f"{timestamp}   {action}")
 
@@ -444,8 +533,11 @@ class MainWindow(QMainWindow):
         if not entry.executed:
             self._prepend_bounded(self.action_log, f"{timestamp}   Blocked: {entry.blocked_reason}")
 
-    def _prepend_bounded(self, widget: QListWidget, text: str) -> None:
-        widget.insertItem(0, text)
+    def _prepend_bounded(self, widget: QListWidget, text: str, gesture: str | None = None) -> None:
+        from PyQt6.QtWidgets import QListWidgetItem
+        item = QListWidgetItem(gesture_icon(gesture) if gesture else QIcon(), text)
+        if gesture: item.setToolTip(gesture)
+        widget.insertItem(0, item)
         while widget.count() > self.MAX_LOG_ITEMS:
             widget.takeItem(widget.count() - 1)
 
@@ -453,6 +545,8 @@ class MainWindow(QMainWindow):
     def update_diagnostics(self, metrics: object) -> None:
         """Display the latest passive pipeline profiling snapshot."""
         self.diagnostics_page.update_metrics(metrics)
+        overlay_metrics = self.cursor_assist_overlay.metrics()
+        self.diagnostics_page.update_cursor_overlay(self.cursor_assist_overlay.state, overlay_metrics)
         self.diagnostics.setText(
             f"Camera FPS       {metrics.camera_fps:5.1f}\n"
             f"Recognition FPS  {metrics.recognition_fps:5.1f}\n"
@@ -463,6 +557,11 @@ class MainWindow(QMainWindow):
             f"Hands detected   {metrics.hands_detected:5d}\n"
             f"Left hand        {metrics.left_hand_pose or '-'}\n"
             f"Right hand       {metrics.right_hand_pose or '-'}\n"
+            f"Motion gesture   {metrics.motion_gesture}\n"
+            f"Motion source    {metrics.motion_source}\n"
+            f"Overlay FPS      {overlay_metrics.render_fps:5.1f}\n"
+            f"Overlay CPU      {overlay_metrics.paint_cpu_percent:5.3f}%\n"
+            f"Overlay memory   {overlay_metrics.framebuffer_kb:5.1f} KB\n"
             + self._profile_diagnostics_text()
         )
 
@@ -492,15 +591,133 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self.settings_manager.settings, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        settings = self.settings_manager.update(**dialog.values())
+        try:
+            settings = self.settings_manager.update(**dialog.values())
+        except (OSError, TypeError, ValueError) as exc:
+            logger.exception("Unable to save settings")
+            QMessageBox.warning(self, "Settings were not saved", str(exc))
+            return
         if hasattr(self.camera, "update_settings"):
             self.camera.update_settings(settings)
+        if hasattr(self.clap_detector, "configure"):
+            self.clap_detector.configure(
+                device=settings.microphone_device,
+                min_peak=settings.clap_min_peak,
+                rms_threshold=settings.clap_rms_threshold,
+                noise_multiplier=settings.clap_noise_multiplier,
+                min_clap_separation=settings.double_clap_min_interval,
+                max_clap_separation=settings.double_clap_max_interval,
+            )
         self.profile_switcher.set_enabled(settings.auto_switch_profiles)
         if settings.theme != self._theme_mode:
             self._theme_mode = settings.theme
             self.setStyleSheet(self._theme(self._theme_mode))
             self._sync_theme_button()
+        self.fingerprint_indicator.configure(
+            settings.show_fingerprint_indicator,
+            settings.fingerprint_indicator_size,
+            settings.fingerprint_indicator_opacity,
+            settings.fingerprint_indicator_fade_duration_ms,
+        )
+        self.cursor_assist_overlay.configure(
+            size=settings.cursor_assist_overlay_size,
+            opacity=settings.cursor_assist_overlay_opacity,
+        )
+        if not settings.cursor_assist_overlay_enabled:
+            self.cursor_assist_overlay.hide_overlay()
+        else:
+            self.cursor_assist_overlay.show_overlay()
         self.statusBar().showMessage("Settings saved", 4000)
+
+    @pyqtSlot()
+    def open_templates(self) -> None:
+        dialog = TemplatesDialog(self.template_manager, self.settings_manager.settings, self)
+        if dialog.exec():
+            pass
+        self._poll_profile_switch()
+        self.statusBar().showMessage(f"Current template: {self.template_manager.get_active_template().name}", 4000)
+
+    @pyqtSlot()
+    def open_custom_gestures(self) -> None:
+        self.custom_gestures_dialog = CustomGesturesDialog(self.custom_gesture_store, self)
+        self.custom_gestures_dialog.exec()
+        if hasattr(self.camera, "update_custom_gestures"):
+            self.camera.update_custom_gestures(self.custom_gesture_store.list_gestures())
+
+    @pyqtSlot()
+    def open_microphone_test(self) -> None:
+        MicrophoneDialog(self.clap_detector, self.settings_manager, self).exec()
+
+    @pyqtSlot()
+    def open_cursor_calibration(self) -> None:
+        self.cursor_calibration_dialog = CursorCalibrationDialog(self.settings_manager, self)
+        self.cursor_calibration_dialog.virtual_cursor_position.connect(self._update_calibration_overlay)
+        self.cursor_assist_overlay.set_state(CursorAssistState.CALIBRATION)
+        self.cursor_calibration_dialog.exec()
+        self.cursor_assist_overlay.set_state(CursorAssistState.IDLE)
+        if self.settings_manager.settings.cursor_reach_calibration is None:
+            self.cursor_assist_overlay.hide_overlay()
+
+    @pyqtSlot(object)
+    def _feed_cursor_calibration(self, fingertips: object) -> None:
+        dialog = getattr(self, "cursor_calibration_dialog", None)
+        if dialog is not None and dialog.isVisible():
+            dialog.feed_fingertips(fingertips)
+            return
+        self._feed_cursor_assist(fingertips)
+
+    @pyqtSlot(int, int, bool)
+    def _update_calibration_overlay(self, global_x: int, global_y: int, snapped: bool) -> None:
+        """Display the calibration-only cursor mapping, never the OS cursor."""
+        self.cursor_assist_overlay.set_state(CursorAssistState.CALIBRATION)
+        self.cursor_assist_overlay.update_position(global_x, global_y)
+
+    def _feed_cursor_assist(self, fingertips: object) -> None:
+        """Render the calibrated MediaPipe position without moving the OS cursor."""
+        settings = self.settings_manager.settings
+        profile = settings.cursor_reach_calibration
+        if not settings.cursor_assist_overlay_enabled or profile is None:
+            self.cursor_assist_overlay.hide_overlay()
+            return
+        if not isinstance(fingertips, list) or not fingertips:
+            return
+        try:
+            if self.cursor_assist_overlay.state == CursorAssistState.IDLE:
+                self.cursor_assist_overlay.set_state(CursorAssistState.TRACKING)
+            hand_x, hand_y = fingertips[0]
+            signature = (tuple(sorted(profile.items())), settings.cursor_dead_zone_percent, settings.cursor_smoothing)
+            if self._cursor_mapper is None or signature != self._cursor_mapper_signature:
+                reach = CursorReach(
+                    profile["center_x"], profile["center_y"], profile["left"], profile["right"],
+                    profile["top"], profile["bottom"], settings.cursor_dead_zone_percent,
+                )
+                self._cursor_mapper = SmoothedCursorReachMapper(reach, settings.cursor_smoothing)
+                self._cursor_mapper_signature = signature
+            target = MonitorLayout.current().target(settings.cursor_target_mode, settings.cursor_target_monitor_id)
+            x, y = self._cursor_mapper.map(float(hand_x), float(hand_y), time.monotonic(), target.width, target.height)
+            self.cursor_assist_overlay.update_position(target.x + x, target.y + y)
+        except (KeyError, TypeError, ValueError, RuntimeError):
+            logger.exception("Unable to update cursor assist overlay")
+            self.cursor_assist_overlay.hide_overlay()
+
+    def _restore_cursor_tracking(self) -> None:
+        if self.cursor_assist_overlay.state != CursorAssistState.CALIBRATION:
+            self.cursor_assist_overlay.set_state(CursorAssistState.TRACKING)
+
+    @pyqtSlot(object)
+    def _feed_cursor_calibration_frame(self, frame: object) -> None:
+        dialog = getattr(self, "cursor_calibration_dialog", None)
+        if dialog is not None and dialog.isVisible():
+            dialog.feed_frame(frame)
+
+    @pyqtSlot()
+    def open_help(self) -> None:
+        HelpDialog(self).exec()
+
+    @pyqtSlot(object)
+    def _feed_custom_gesture_hands(self, hands: object) -> None:
+        if hasattr(self, "custom_gestures_dialog"):
+            self.custom_gestures_dialog.feed_hands(hands)
 
     @pyqtSlot()
     def toggle_theme(self) -> None:
@@ -515,6 +732,18 @@ class MainWindow(QMainWindow):
     @pyqtSlot()
     def toggle_recognition(self) -> None:
         self.stop_camera() if self.activation.is_active else self.start_camera()
+
+    @pyqtSlot()
+    def _handle_clap_toggle(self) -> None:
+        logger.info("Double-clap activation toggle received on UI thread")
+        self.toggle_recognition()
+
+    @pyqtSlot()
+    def _update_microphone_diagnostics(self) -> None:
+        if not hasattr(self.clap_detector, "status"):
+            return
+        status = self.clap_detector.status()
+        self.diagnostics_page.update_microphone(status)
 
     @pyqtSlot(str)
     def _clap_error(self, message: str) -> None:
@@ -580,7 +809,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def stop_camera(self) -> None:
-        self.stop_button.setEnabled(False)
+        self.start_button.setEnabled(False)
         self._set_status("Pausing recognition…", "#fbbf24", animate=True)
         self.camera.stop_camera()
 
@@ -588,8 +817,8 @@ class MainWindow(QMainWindow):
     def _camera_started(self) -> None:
         self.activation.activate()
         self._set_status("Recognition Enabled", "#34d399", animate=True)
-        self.start_button.setEnabled(False)
-        self.stop_button.setEnabled(True)
+        self.start_button.setEnabled(True)
+        self.start_button.setText("Disable Recognition")
         self._set_tray_active(True)
         self.camera_status.setText("●  CAMERA LIVE")
         self.camera_status.setStyleSheet("color: #10b981;")
@@ -605,12 +834,14 @@ class MainWindow(QMainWindow):
         self.activation.deactivate()
         self.preview.clear()
         self.preview.setText("Camera preview is paused")
+        self.fingerprint_indicator.update_fingertips([])
+        self.cursor_assist_overlay.set_state(CursorAssistState.IDLE)
+        self.cursor_assist_overlay.hide_overlay()
         camera_failed = self._camera_error_pending
         self._camera_error_pending = False
         self._set_status("Camera unavailable" if camera_failed else "Recognition Disabled", "#fb7185" if camera_failed else "#64748b")
         self.start_button.setEnabled(True)
         self.start_button.setText("Retry Camera" if camera_failed else "Enable Recognition")
-        self.stop_button.setEnabled(False)
         self._set_tray_active(False)
         self.camera_status.setText("●  CAMERA ERROR" if camera_failed else "●  CAMERA IDLE")
         self.camera_status.setStyleSheet("color: #ef4444;" if camera_failed else "")
@@ -627,10 +858,11 @@ class MainWindow(QMainWindow):
         logger.error("Camera error: %s", message)
         self._profile_poll_timer.stop()
         self._camera_error_pending = True
+        self.cursor_assist_overlay.set_state(CursorAssistState.IDLE)
+        self.cursor_assist_overlay.hide_overlay()
         self.activation.deactivate()
         self._set_status("Camera unavailable", "#fb7185")
         self.start_button.setEnabled(False)
-        self.stop_button.setEnabled(False)
         self._set_tray_active(False)
         self.camera_status.setText("●  CAMERA ERROR")
         self.camera_status.setStyleSheet("color: #ef4444;")
@@ -652,6 +884,8 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
+        if hasattr(self, "fingerprint_indicator"):
+            self.fingerprint_indicator.sync_geometry()
         if not hasattr(self, "_content_layout"):
             return
         direction = (
@@ -666,6 +900,10 @@ class MainWindow(QMainWindow):
         if self._exit_requested:
             event.accept()
             return
+        if self.settings_manager.settings.exit_on_close:
+            event.ignore()
+            self.exit_application()
+            return
         logger.info("Hiding HandWave in the system tray")
         event.ignore()
         self.hide()
@@ -677,8 +915,10 @@ class MainWindow(QMainWindow):
         self._exit_requested = True
         logger.info("Exiting HandWave")
         self._profile_poll_timer.stop()
+        self._microphone_diagnostics_timer.stop()
         self.camera.stop_camera()
         self.clap_detector.stop()
+        self.cursor_assist_overlay.hide_overlay()
         self.activation.deactivate()
         self.tray_icon.hide()
         self.hide()

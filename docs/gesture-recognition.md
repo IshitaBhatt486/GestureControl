@@ -7,8 +7,33 @@ per-finger extended/folded pattern (`HandLandmarkData.get_finger_states()`,
 derived from joint angles, rotation-independent) to a name: Open Palm, Fist,
 Thumbs Up, Thumbs Down, Peace Sign, Pointing. Thumbs Up/Down also check the
 thumb's direction vector, since both share the same finger-state pattern.
-Swipe Left/Right (`SwipeRecognizer`) and pinch (`PinchController`) use
-centroid motion instead of a static pattern.
+`SwipeRecognizer` detects two deliberately distinct motion sources. A
+**finger swipe** follows landmark 8 (the index fingertip) only while the index
+finger is extended and middle/ring/pinky are folded. A **hand swipe** follows
+the whole-hand landmark centroid only while all five fingers are extended
+(open palm). This source is emitted in diagnostics and is not inferred from a
+gesture display name. Finger swipes are vertical only; open-hand swipes can be
+vertical or horizontal. Pinch (`PinchController`) uses its own geometry.
+
+## Navigation swipes: manual test procedure
+
+Keep the hand in view, make one decisive movement in roughly 0.1–0.7 seconds,
+then release the pose before repeating. The movement must be at least about
+18% of the camera frame and predominantly one axis; diagonal and slow motion
+are rejected.
+
+| Physical gesture | Default configured action |
+| --- | --- |
+| Extend only your index finger; move it upward | Finger Swipe Up → `Alt+Tab` (bring forward the most recently used window) |
+| Hold an open palm; move the whole hand upward | Hand Swipe Up → `Win+Tab` (show Task View) |
+| Extend only your index finger; move it downward | Finger Swipe Down → `Esc` (dismiss/collapse an overview) |
+| Hold an open palm; move the whole hand downward | Hand Swipe Down → `Esc` (dismiss/collapse an overview) |
+| Hold an open palm; move it left | Swipe Left → `Win+Ctrl+Left` (previous virtual desktop) |
+| Hold an open palm; move it right | Swipe Right → `Win+Ctrl+Right` (next virtual desktop) |
+
+All six bindings appear in Settings → Gestures & Actions and can be disabled
+or rebound. If Windows rejects synthetic input, HandWave records a local
+warning and safely performs no fallback action.
 
 ## Multi-hand tracking
 
@@ -43,14 +68,14 @@ misread as a two-hand gesture — see the false-activation tests in
 
 ## Arbitration priority
 
-One action name is chosen per frame, in this order (implemented in
-`GestureWorker.run()`, `handwave/vision/camera_manager.py`):
+One action name is chosen per frame, in this order (implemented by
+`select_action_candidate()` in `handwave/gestures/arbitration.py`):
 
 **two-hand gesture > pinch > swipe > static gesture**
 
-This is a plain `if/elif` chain, not a configurable priority table — changing
-it means editing that one method, with a comment there explaining the
-rationale (two-hand and pinch are intentional, low-ambiguity motions;
+This is a small, explicit policy function, not a configurable priority table.
+Changing it means editing that policy, which documents the rationale
+(two-hand and pinch are intentional, low-ambiguity motions;
 swipe and static poses are more prone to accidental triggering while doing
 something else with the hand).
 

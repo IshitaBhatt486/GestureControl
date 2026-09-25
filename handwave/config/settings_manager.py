@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -19,7 +18,7 @@ from handwave.config.gesture_config import (
     complete_enabled,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -33,6 +32,30 @@ class AppSettings:
     enabled_gestures: dict[str, bool] = field(default_factory=complete_enabled)
     theme: str = "dark"
     auto_switch_profiles: bool = True
+    exit_on_close: bool = False
+    show_fingerprint_indicator: bool = True
+    fingerprint_indicator_size: int = 18
+    fingerprint_indicator_opacity: float = 1.0
+    fingerprint_indicator_fade_duration_ms: int = 250
+    microphone_device: int | None = None  # None uses the Windows default input.
+    clap_min_peak: float = 0.02
+    clap_rms_threshold: float = 0.0
+    clap_noise_multiplier: float = 2.5
+    double_clap_min_interval: float = 0.12
+    double_clap_max_interval: float = 1.0
+    cursor_reach_calibration: dict[str, float] | None = None
+    cursor_dead_zone_percent: int = 10
+    cursor_smoothing: str = "medium"
+    # Cursor calibration is independent of the desktop layout, but the target
+    # area is not.  Persist both the user's choice and a layout fingerprint so
+    # a moved or disconnected display can be detected before cursor control is
+    # enabled in a future cursor-control feature.
+    cursor_target_mode: str = "primary"
+    cursor_target_monitor_id: str | None = None
+    cursor_monitor_layout_fingerprint: str = ""
+    cursor_assist_overlay_enabled: bool = True
+    cursor_assist_overlay_size: int = 22
+    cursor_assist_overlay_opacity: float = 0.72
 
     def __post_init__(self) -> None:
         if not isinstance(self.camera_index, int) or isinstance(self.camera_index, bool) or self.camera_index < 0:
@@ -53,6 +76,8 @@ class AppSettings:
             raise ValueError("startup_enabled and overlay_enabled must be booleans")
         if not isinstance(self.auto_switch_profiles, bool):
             raise ValueError("auto_switch_profiles must be a boolean")
+        if not isinstance(self.exit_on_close, bool):
+            raise ValueError("exit_on_close must be a boolean")
         normalized_bindings = complete_bindings(self.gesture_bindings)
         object.__setattr__(self, "gesture_bindings", normalized_bindings)
         if set(normalized_bindings) != set(GESTURES):
@@ -63,19 +88,69 @@ class AppSettings:
             raise ValueError("enabled_gestures values must be booleans")
         if self.theme not in {"dark", "light"}:
             raise ValueError("theme must be 'dark' or 'light'")
+        if not isinstance(self.show_fingerprint_indicator, bool):
+            raise ValueError("show_fingerprint_indicator must be a boolean")
+        if not isinstance(self.fingerprint_indicator_size, int) or not 8 <= self.fingerprint_indicator_size <= 48:
+            raise ValueError("fingerprint_indicator_size must be between 8 and 48")
+        if not isinstance(self.fingerprint_indicator_opacity, (int, float)) or not 0.2 <= self.fingerprint_indicator_opacity <= 1.0:
+            raise ValueError("fingerprint_indicator_opacity must be between 0.2 and 1.0")
+        if not isinstance(self.fingerprint_indicator_fade_duration_ms, int) or not 50 <= self.fingerprint_indicator_fade_duration_ms <= 2000:
+            raise ValueError("fingerprint_indicator_fade_duration_ms must be between 50 and 2000")
+        if self.microphone_device is not None and (not isinstance(self.microphone_device, int) or self.microphone_device < 0):
+            raise ValueError("microphone_device must be a non-negative integer or None")
+        if not isinstance(self.clap_min_peak, (int, float)) or not 0.001 <= self.clap_min_peak <= 1.0:
+            raise ValueError("clap_min_peak must be between 0.001 and 1.0")
+        if not isinstance(self.clap_rms_threshold, (int, float)) or not 0.0 <= self.clap_rms_threshold <= 1.0:
+            raise ValueError("clap_rms_threshold must be between 0 and 1")
+        if not isinstance(self.clap_noise_multiplier, (int, float)) or not 1.0 <= self.clap_noise_multiplier <= 20.0:
+            raise ValueError("clap_noise_multiplier must be between 1 and 20")
+        if not isinstance(self.double_clap_min_interval, (int, float)) or not 0.05 <= self.double_clap_min_interval <= 2.0:
+            raise ValueError("double_clap_min_interval must be between 0.05 and 2 seconds")
+        if not isinstance(self.double_clap_max_interval, (int, float)) or not self.double_clap_min_interval < self.double_clap_max_interval <= 3.0:
+            raise ValueError("double_clap_max_interval must exceed the minimum and be at most 3 seconds")
+        calibration = self.cursor_reach_calibration
+        if calibration is not None:
+            required = {"center_x", "center_y", "left", "right", "top", "bottom"}
+            if not isinstance(calibration, dict) or set(calibration) != required:
+                raise ValueError("cursor_reach_calibration must contain the six reach coordinates")
+            if any(not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0 for value in calibration.values()):
+                raise ValueError("cursor reach coordinates must be between 0 and 1")
+            if not calibration["left"] < calibration["center_x"] < calibration["right"]:
+                raise ValueError("cursor reach calibration must surround center horizontally")
+            if not calibration["top"] < calibration["center_y"] < calibration["bottom"]:
+                raise ValueError("cursor reach calibration must surround center vertically")
+            object.__setattr__(self, "cursor_reach_calibration", dict(calibration))
+        if not isinstance(self.cursor_dead_zone_percent, int) or self.cursor_dead_zone_percent not in {5, 10, 15}:
+            raise ValueError("cursor_dead_zone_percent must be 5, 10, or 15")
+        if self.cursor_smoothing not in {"low", "medium", "high"}:
+            raise ValueError("cursor_smoothing must be low, medium, or high")
+        if self.cursor_target_mode not in {"primary", "all"}:
+            raise ValueError("cursor_target_mode must be primary or all")
+        if self.cursor_target_monitor_id is not None and not isinstance(self.cursor_target_monitor_id, str):
+            raise ValueError("cursor_target_monitor_id must be a string or None")
+        if not isinstance(self.cursor_monitor_layout_fingerprint, str):
+            raise ValueError("cursor_monitor_layout_fingerprint must be a string")
+        if not isinstance(self.cursor_assist_overlay_enabled, bool):
+            raise ValueError("cursor_assist_overlay_enabled must be a boolean")
+        if not isinstance(self.cursor_assist_overlay_size, int) or not 18 <= self.cursor_assist_overlay_size <= 24:
+            raise ValueError("cursor_assist_overlay_size must be between 18 and 24")
+        if not isinstance(self.cursor_assist_overlay_opacity, (int, float)) or not 0.2 <= self.cursor_assist_overlay_opacity <= 1.0:
+            raise ValueError("cursor_assist_overlay_opacity must be between 0.2 and 1")
 
 
 class SettingsManager:
     """Load and atomically save application settings across restarts."""
 
+    # Always use the current device/user profile, including source checkouts.
+    # Keeping mutable calibration beside installed code breaks on read-only
+    # locations and loses settings when a checkout is replaced.
     DEFAULT_PATH = (
-        Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        Path(os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Roaming"))
         / "HandWave"
         / "config"
         / "settings.json"
-        if getattr(sys, "frozen", False)
-        else Path(__file__).with_name("settings.json")
     )
+    LEGACY_SOURCE_PATH = Path(__file__).with_name("settings.json")
     FIELDS = set(AppSettings.__dataclass_fields__)
 
     def __init__(
@@ -86,23 +161,53 @@ class SettingsManager:
         self.path = Path(path) if path is not None else self.DEFAULT_PATH
         self._backup_path = self.path.with_suffix(self.path.suffix + ".bak")
         self.startup_manager = startup_manager
+        self._loaded_legacy_source = False
         self.settings = self.load()
+        if self._loaded_legacy_source:
+            # Complete the migration immediately so calibration survives source
+            # updates and is available to every launch of this device account.
+            self.save()
 
     def load(self) -> AppSettings:
-        for candidate in (self.path, self._backup_path):
+        candidates = [self.path, self._backup_path]
+        if self.path == self.DEFAULT_PATH and not self.path.exists() and self.LEGACY_SOURCE_PATH.exists():
+            candidates.append(self.LEGACY_SOURCE_PATH)
+        for candidate in candidates:
             if not candidate.exists():
                 continue
             try:
                 raw = json.loads(candidate.read_text(encoding="utf-8"))
-                # schema_version is informational for now: the field set has not
-                # changed shape since version 1, so no migration is required yet.
-                values = {key: value for key, value in raw.items() if key in self.FIELDS}
+                values = self._migrate(raw)
                 values["gesture_bindings"] = complete_bindings(values.get("gesture_bindings"))
                 values["enabled_gestures"] = complete_enabled(values.get("enabled_gestures"))
-                return AppSettings(**values)
+                settings = AppSettings(**values)
+                self._loaded_legacy_source = candidate == self.LEGACY_SOURCE_PATH
+                return settings
             except (OSError, json.JSONDecodeError, TypeError, ValueError):
                 continue
         return AppSettings()
+
+    @classmethod
+    def _migrate(cls, raw: dict[str, Any]) -> dict[str, Any]:
+        """Upgrade old settings in memory while retaining unknown-key filtering.
+
+        Version 1 and unversioned files predate cursor target selection.
+        Version 2 predates the visual cursor-assist preferences. Defaults retain
+        the former primary-monitor behavior. Saving writes schema version 3.
+        """
+        version = raw.get("schema_version", 1)
+        if not isinstance(version, int) or version < 1:
+            raise ValueError("Unsupported settings schema version")
+        values = {key: value for key, value in raw.items() if key in cls.FIELDS}
+        if version < 2:
+            values.setdefault("cursor_target_mode", "primary")
+            values.setdefault("cursor_target_monitor_id", None)
+            values.setdefault("cursor_monitor_layout_fingerprint", "")
+        if version < 3:
+            values.setdefault("cursor_assist_overlay_enabled", True)
+            values.setdefault("cursor_assist_overlay_size", 22)
+            values.setdefault("cursor_assist_overlay_opacity", 0.72)
+        return values
 
     def update(self, **changes: Any) -> AppSettings:
         unknown = set(changes) - self.FIELDS

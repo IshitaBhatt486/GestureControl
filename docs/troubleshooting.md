@@ -100,6 +100,16 @@ Speech and steady noise are rejected using peak-to-RMS ratio plus an adaptive
 noise floor; see [architecture.md](architecture.md) and
 `handwave/services/clap_detector.py`. No audio is ever recorded to disk.
 
+### Manual microphone test
+
+Open **Microphone Test** on the dashboard. In a quiet room, select **Start
+Ambient Calibration**, wait a few seconds, then select **Finish Calibration**.
+The screen shows ambient level, current peak level, adaptive threshold, and
+whether it is waiting for the first or second clap. Test quiet, normal, and
+loud pairs 0.2–1.0 seconds apart; then verify that speech, music, keyboard
+typing, and sustained sound do not confirm a double clap. If the device is
+unavailable, reconnect/select it in Windows and use **Retry Microphone**.
+
 ## Application profile does not switch automatically
 
 - Confirm "Automatically switch application profiles" is enabled in Settings → General.
